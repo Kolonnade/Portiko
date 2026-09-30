@@ -1,5 +1,5 @@
-// Package rp is the relying-party half of Portico: everything a website needs to
-// sign people in against a Portico provider.
+// Package rp is the relying-party half of Portiko: everything a website needs to
+// sign people in against a Portiko provider.
 //
 // It is built on zitadel/oidc's relying party, which handles discovery, PKCE,
 // state, the code exchange, ID-token verification and refresh. What this package
@@ -28,9 +28,9 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/Kolonnade/portico/internal/verify"
-	"github.com/Kolonnade/portico/protocol"
-	"github.com/Kolonnade/portico/rp/session"
+	"github.com/Kolonnade/Portiko/internal/verify"
+	"github.com/Kolonnade/Portiko/protocol"
+	"github.com/Kolonnade/Portiko/rp/session"
 )
 
 // Config configures a relying party.
@@ -74,7 +74,7 @@ type Client struct {
 }
 
 const (
-	flowCookie   = "portico_rp_flow"
+	flowCookie   = "portiko_rp_flow"
 	leeway       = 30 * time.Second
 	sessionTTL   = 30 * 24 * time.Hour
 	fetchTimeout = 10 * time.Second
@@ -451,7 +451,7 @@ func randomToken(n int) (string, error) {
 // encrypting, so one secret configures both without reusing it.
 func deriveKey(secret []byte, purpose string) []byte {
 	h := sha256.New()
-	h.Write([]byte("portico rp cookie " + purpose + "\x00"))
+	h.Write([]byte("portiko rp cookie " + purpose + "\x00"))
 	h.Write(secret)
 	return h.Sum(nil)
 }

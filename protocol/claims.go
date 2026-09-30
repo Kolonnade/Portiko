@@ -41,7 +41,7 @@ const EventTokenClaimsChange = "https://schemas.openid.net/secevent/caep/event-t
 // "whatever the header says" accepts an attacker's choice of algorithm.
 const SigningAlg = "ES256"
 
-// Token type headers for the tokens Portico signs itself. A verifier checks the
+// Token type headers for the tokens Portiko signs itself. A verifier checks the
 // header as well as the claims, so one kind of token can never be replayed as
 // another (RFC 8725 §3.11).
 const (

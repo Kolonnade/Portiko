@@ -1,4 +1,4 @@
-// Package store is Portico's persistence: accounts, passkeys, ceremonies,
+// Package store is Portiko's persistence: accounts, passkeys, ceremonies,
 // browser sessions, clients, authorization requests and refresh tokens, all in
 // PostgreSQL so a deployment can run more than one replica and survive a restart
 // mid-sign-in.

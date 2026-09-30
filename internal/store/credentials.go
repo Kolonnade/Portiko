@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/Kolonnade/portico/internal/passkey"
+	"github.com/Kolonnade/Portiko/internal/passkey"
 )
 
 const credColumns = `id, user_id, credential_id, public_key, user_handle,

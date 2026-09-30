@@ -18,9 +18,9 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/Kolonnade/portico/internal/config"
-	"github.com/Kolonnade/portico/internal/mailer"
-	"github.com/Kolonnade/portico/internal/store"
+	"github.com/Kolonnade/Portiko/internal/config"
+	"github.com/Kolonnade/Portiko/internal/mailer"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // Ceremony lifetimes. Registration is short because the user is actively in the

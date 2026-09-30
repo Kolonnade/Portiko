@@ -30,7 +30,7 @@ sessions (one row per browser and account)
 
 ## Choosing an account at the provider
 
-Portico uses the standard OpenID Connect parameters rather than inventing any:
+Portiko uses the standard OpenID Connect parameters rather than inventing any:
 
 | Request | Result |
 |---|---|

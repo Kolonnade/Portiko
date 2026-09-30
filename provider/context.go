@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/protocol"
 )
 
 func contextWithVersion(ctx context.Context, v protocol.Version) context.Context {

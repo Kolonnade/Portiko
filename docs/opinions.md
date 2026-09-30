@@ -1,16 +1,16 @@
 # Opinions
 
-Portico is opinionated on purpose. The positions below are the ones that shape the API, and a change that contradicts one of them will be turned down however good the code is — so they are written here rather than discovered at review time.
+Portiko is opinionated on purpose. The positions below are the ones that shape the API, and a change that contradicts one of them will be turned down however good the code is — so they are written here rather than discovered at review time.
 
 ## Identity, never authorization
 
-Portico answers **who is this person**. It never answers **what may they do**. No roles, no permissions, no admin flags, in the provider or in its tokens.
+Portiko answers **who is this person**. It never answers **what may they do**. No roles, no permissions, no admin flags, in the provider or in its tokens.
 
 This is not a missing feature. A role means nothing without context — admin of *which* group, on *which* server? — and a role inside a token is stale for that token's lifetime, so demoting someone leaves them powerful until it expires. Your application knows what its data means and can read its own rules fresh on every request. It should.
 
 ## The protocol comes from `zitadel/oidc`
 
-Authorize, token, refresh, discovery, introspection, revocation, end-session: all of it comes from [`zitadel/oidc`](https://github.com/zitadel/oidc), which is maintained and exercised far beyond this project. Portico supplies the storage, the ceremonies and the product surface around it.
+Authorize, token, refresh, discovery, introspection, revocation, end-session: all of it comes from [`zitadel/oidc`](https://github.com/zitadel/oidc), which is maintained and exercised far beyond this project. Portiko supplies the storage, the ceremonies and the product surface around it.
 
 The OpenID Foundation's conformance suite runs before a release goes out. "It works against our own client" is not evidence.
 
@@ -50,6 +50,6 @@ The profile is an interface, not a schema. Display name, avatar, whatever your p
 
 ## Standards over invention
 
-Where a specification exists, Portico follows it: OpenID Connect and its Back-Channel Logout, RFC 8252 for native apps, OpenID Connect Native SSO for an app family sharing a device, RFC 8693 for token exchange, RFC 8417 and RFC 8935 for pushed security events, RFC 9068 for access-token format, RFC 9700 for the security practices.
+Where a specification exists, Portiko follows it: OpenID Connect and its Back-Channel Logout, RFC 8252 for native apps, OpenID Connect Native SSO for an app family sharing a device, RFC 8693 for token exchange, RFC 8417 and RFC 8935 for pushed security events, RFC 9068 for access-token format, RFC 9700 for the security practices.
 
 Inventing a protocol here means inventing its attacks too.

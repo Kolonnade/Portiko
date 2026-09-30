@@ -3,7 +3,7 @@ package provider
 import (
 	"net/http"
 
-	kitprotocol "github.com/Kolonnade/portico/protocol"
+	kitprotocol "github.com/Kolonnade/Portiko/protocol"
 )
 
 // Session: GET /accounts/v1/session[?account=n] — whether an account is signed

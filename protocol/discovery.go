@@ -2,9 +2,9 @@ package protocol
 
 import "time"
 
-// WellKnownPath is where a provider serves its Portico configuration: the
+// WellKnownPath is where a provider serves its Portiko configuration: the
 // protocol version range, which OpenID Connect discovery has no field for.
-const WellKnownPath = "/.well-known/portico-configuration"
+const WellKnownPath = "/.well-known/portiko-configuration"
 
 // LegacyWellKnownPath is the same document at the path the proof of concept
 // used. A provider serves both until every relying party has moved.

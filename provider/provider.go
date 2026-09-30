@@ -1,4 +1,4 @@
-// Package provider is Portico's identity provider: passkey ceremonies, a set of
+// Package provider is Portiko's identity provider: passkey ceremonies, a set of
 // signed-in accounts per browser, and an OpenID Connect provider built on
 // zitadel/oidc that issues audience-scoped tokens to every site.
 package provider
@@ -14,12 +14,12 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/op"
 	"golang.org/x/text/language"
 
-	"github.com/Kolonnade/portico/internal/accounts"
-	"github.com/Kolonnade/portico/internal/config"
-	"github.com/Kolonnade/portico/internal/mailer"
-	"github.com/Kolonnade/portico/internal/passkey"
-	"github.com/Kolonnade/portico/internal/store"
-	"github.com/Kolonnade/portico/profile"
+	"github.com/Kolonnade/Portiko/internal/accounts"
+	"github.com/Kolonnade/Portiko/internal/config"
+	"github.com/Kolonnade/Portiko/internal/mailer"
+	"github.com/Kolonnade/Portiko/internal/passkey"
+	"github.com/Kolonnade/Portiko/internal/store"
+	"github.com/Kolonnade/Portiko/profile"
 )
 
 // Config is the provider's runtime configuration.

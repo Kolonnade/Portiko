@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Kolonnade/portico/protocol"
-	"github.com/Kolonnade/portico/rp/session"
-	"github.com/Kolonnade/portico/internal/verify"
+	"github.com/Kolonnade/Portiko/protocol"
+	"github.com/Kolonnade/Portiko/rp/session"
+	"github.com/Kolonnade/Portiko/internal/verify"
 )
 
 // EventsHandler receives Security Event Tokens pushed by the accounts service

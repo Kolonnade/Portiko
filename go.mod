@@ -1,4 +1,4 @@
-module github.com/Kolonnade/portico
+module github.com/Kolonnade/Portiko
 
 go 1.26.0
 

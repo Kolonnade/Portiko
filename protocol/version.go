@@ -13,7 +13,7 @@ import (
 )
 
 // Name identifies the protocol in discovery documents.
-const Name = "portico"
+const Name = "portiko"
 
 // HeaderVersion carries the negotiated protocol version on every request and
 // response, modelled on Connect-Protocol-Version.

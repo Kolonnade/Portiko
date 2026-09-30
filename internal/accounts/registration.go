@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
-	"github.com/Kolonnade/portico/internal/passkey"
-	"github.com/Kolonnade/portico/internal/store"
+	"github.com/Kolonnade/Portiko/internal/passkey"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // StartRegistration accepts an email and sends a one-time code.

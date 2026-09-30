@@ -12,7 +12,7 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
-	"github.com/Kolonnade/portico/internal/store"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // Login is the handoff between zitadel/oidc and the people signing in: the

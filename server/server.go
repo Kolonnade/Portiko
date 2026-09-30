@@ -1,4 +1,4 @@
-// Package server is the Portico command: it runs the provider and the operator
+// Package server is the Portiko command: it runs the provider and the operator
 // commands that register the sites allowed to sign people in.
 //
 // A deployment's own binary is usually a few lines that call Main, supplying
@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Kolonnade/portico/internal/store"
-	"github.com/Kolonnade/portico/provider"
+	"github.com/Kolonnade/Portiko/internal/store"
+	"github.com/Kolonnade/Portiko/provider"
 )
 
 // Main runs the command named by args[0] and returns the process exit code.
@@ -57,7 +57,7 @@ func Main(name string, args []string, opts provider.Options) int {
 }
 
 func usage(w io.Writer, name string) {
-	fmt.Fprintf(w, `%[1]s — a Portico identity provider
+	fmt.Fprintf(w, `%[1]s — a Portiko identity provider
 
 usage:
   %[1]s serve
@@ -66,7 +66,7 @@ usage:
   %[1]s set-events-uri <client-id> <events-uri>
   %[1]s set-scopes <client-id> <scope,scope,...>
 
-Configuration comes from the environment; see the Portico README.
+Configuration comes from the environment; see the Portiko README.
 `, name)
 }
 

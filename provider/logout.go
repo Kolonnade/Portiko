@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Kolonnade/portico/internal/store"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // logoutTimeout bounds how long a sign-out waits on the sites. A site that is

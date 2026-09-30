@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Kolonnade/portico/internal/config"
-	"github.com/Kolonnade/portico/profile"
+	"github.com/Kolonnade/Portiko/internal/config"
+	"github.com/Kolonnade/Portiko/profile"
 )
 
 //go:embed templates/*.html

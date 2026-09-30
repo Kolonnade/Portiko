@@ -26,18 +26,18 @@ import (
 	"github.com/descope/virtualwebauthn"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Kolonnade/portico/internal/store"
-	"github.com/Kolonnade/portico/migrations"
-	"github.com/Kolonnade/portico/provider"
-	"github.com/Kolonnade/portico/rp"
-	"github.com/Kolonnade/portico/rp/session"
+	"github.com/Kolonnade/Portiko/internal/store"
+	"github.com/Kolonnade/Portiko/migrations"
+	"github.com/Kolonnade/Portiko/provider"
+	"github.com/Kolonnade/Portiko/rp"
+	"github.com/Kolonnade/Portiko/rp/session"
 )
 
 func testDatabaseURL() string {
 	if v := os.Getenv("TEST_DATABASE_URL"); v != "" {
 		return v
 	}
-	return "postgres://localhost:5432/portico_test?sslmode=disable"
+	return "postgres://localhost:5432/portiko_test?sslmode=disable"
 }
 
 var (
@@ -74,7 +74,7 @@ func resetSchema(t *testing.T) {
 		}
 	})
 	if schemaErr != nil {
-		t.Skipf("test database unavailable (%v); createdb portico_test", schemaErr)
+		t.Skipf("test database unavailable (%v); createdb portiko_test", schemaErr)
 	}
 }
 
@@ -267,7 +267,7 @@ type site struct {
 	clientID string
 }
 
-// newSite starts a real Portico relying party registered with the provider.
+// newSite starts a real Portiko relying party registered with the provider.
 func (h *harness) newSite(clientID string, edit ...func(*store.Client)) *site {
 	h.t.Helper()
 	ctx := context.Background()
@@ -840,9 +840,9 @@ func TestDiscoveryListsOnlyServedEndpoints(t *testing.T) {
 	if checked < 5 {
 		t.Errorf("only %d endpoints advertised", checked)
 	}
-	pc := h.get("/.well-known/portico-configuration")
-	if body := bodyString(t, pc); !strings.Contains(body, `"protocol":"portico"`) {
-		t.Errorf("portico configuration: %s", body)
+	pc := h.get("/.well-known/portiko-configuration")
+	if body := bodyString(t, pc); !strings.Contains(body, `"protocol":"portiko"`) {
+		t.Errorf("portiko configuration: %s", body)
 	}
 }
 

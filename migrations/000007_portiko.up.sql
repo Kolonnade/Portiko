@@ -1,4 +1,4 @@
--- Portico: the provider moves onto zitadel/oidc, and a browser can hold several
+-- Portiko: the provider moves onto zitadel/oidc, and a browser can hold several
 -- signed-in accounts.
 
 -- ---------------------------------------------------------------- browsers

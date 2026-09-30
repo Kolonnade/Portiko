@@ -12,7 +12,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/Kolonnade/portico/internal/config"
+	"github.com/Kolonnade/Portiko/internal/config"
 )
 
 // UserHandleLen is the length of the random WebAuthn user handle.

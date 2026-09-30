@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Kolonnade/portico/internal/store"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // SSOCookieName is the provider's own cookie. Its value names a browser; the

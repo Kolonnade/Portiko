@@ -1,4 +1,4 @@
-// Package migrations holds Portico's schema as ordered SQL files, in the
+// Package migrations holds Portiko's schema as ordered SQL files, in the
 // golang-migrate naming scheme (NNNNNN_name.up.sql / .down.sql).
 //
 // Operators apply them with the migrate CLI; the files are also embedded so a

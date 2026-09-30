@@ -14,11 +14,11 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
-	"github.com/Kolonnade/portico/internal/config"
-	"github.com/Kolonnade/portico/internal/keys"
-	"github.com/Kolonnade/portico/internal/store"
-	"github.com/Kolonnade/portico/profile"
-	"github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/internal/config"
+	"github.com/Kolonnade/Portiko/internal/keys"
+	"github.com/Kolonnade/Portiko/internal/store"
+	"github.com/Kolonnade/Portiko/profile"
+	"github.com/Kolonnade/Portiko/protocol"
 )
 
 // AccessTokenTTL bounds how long a revoked account keeps working access at a
@@ -29,7 +29,7 @@ const AccessTokenTTL = 15 * time.Minute
 // presented to an API.
 const IDTokenTTL = 5 * time.Minute
 
-// storage is Portico's op.Storage: every piece of protocol state zitadel/oidc
+// storage is Portiko's op.Storage: every piece of protocol state zitadel/oidc
 // needs, kept in PostgreSQL.
 type storage struct {
 	db       *store.DB
@@ -178,7 +178,7 @@ func (s *storage) TokenRequestByRefreshToken(ctx context.Context, token string) 
 		return nil, oidc.ErrInvalidGrant().WithDescription("refresh token is invalid or revoked").WithParent(err)
 	}
 	// A refresh token is offline access by definition. Tokens issued before
-	// Portico recorded the scope explicitly, and a relying party that asks for it
+	// Portiko recorded the scope explicitly, and a relying party that asks for it
 	// again on refresh must not be refused over the difference.
 	if !slices.Contains(rt.Scopes, oidc.ScopeOfflineAccess) {
 		rt.Scopes = append(rt.Scopes, oidc.ScopeOfflineAccess)

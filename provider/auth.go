@@ -13,12 +13,12 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
-	"github.com/Kolonnade/portico/internal/accounts"
-	"github.com/Kolonnade/portico/internal/config"
-	"github.com/Kolonnade/portico/internal/keys"
-	"github.com/Kolonnade/portico/internal/store"
-	"github.com/Kolonnade/portico/profile"
-	kitprotocol "github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/internal/accounts"
+	"github.com/Kolonnade/Portiko/internal/config"
+	"github.com/Kolonnade/Portiko/internal/keys"
+	"github.com/Kolonnade/Portiko/internal/store"
+	"github.com/Kolonnade/Portiko/profile"
+	kitprotocol "github.com/Kolonnade/Portiko/protocol"
 )
 
 // Auth serves the passkey ceremonies, the browser's accounts and signing out.

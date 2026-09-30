@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/Kolonnade/portico/internal/passkey"
+	"github.com/Kolonnade/Portiko/internal/passkey"
 )
 
 // NormalizeEmail lowercases and trims an address.

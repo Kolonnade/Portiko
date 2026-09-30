@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	kitprotocol "github.com/Kolonnade/portico/protocol"
+	kitprotocol "github.com/Kolonnade/Portiko/protocol"
 
-	"github.com/Kolonnade/portico/profile"
-	"github.com/Kolonnade/portico/internal/store"
+	"github.com/Kolonnade/Portiko/profile"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // notifyProfileChange pushes a profile change to every site that holds a live

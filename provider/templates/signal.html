@@ -23,7 +23,7 @@ async function signalPasskeyDetails(s) {
 // Without storage it does nothing: the save itself already signaled.
 async function signalPasskeyDetailsOnce(s, version) {
   if (!s || !s.name || !s.user_ids || !s.user_ids.length || !version) return;
-  const key = 'portico.passkey-signal.' + s.rp_id + '.' + s.user_ids.join('.');
+  const key = 'portiko.passkey-signal.' + s.rp_id + '.' + s.user_ids.join('.');
   const stamp = version + ':' + s.name;
   try { if (localStorage.getItem(key) === stamp) return; } catch (e) { return; }
   await signalPasskeyDetails(s);

@@ -1,4 +1,4 @@
-# Portico documentation
+# Portiko documentation
 
 Design notes written ahead of the code, so the implementation has something to be checked against.
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/Kolonnade/portico/internal/keys"
+	"github.com/Kolonnade/Portiko/internal/keys"
 )
 
 // LoadKeys reads every non-retired signing key.

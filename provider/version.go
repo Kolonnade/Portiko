@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/protocol"
 )
 
 // Supported is the set of protocol versions this build serves. A new minor is

@@ -17,7 +17,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 
-	"github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/protocol"
 )
 
 // KeySet fetches and caches the issuer's public keys.

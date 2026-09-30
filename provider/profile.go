@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Kolonnade/portico/internal/store"
-	"github.com/Kolonnade/portico/profile"
-	kitprotocol "github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/internal/store"
+	"github.com/Kolonnade/Portiko/profile"
+	kitprotocol "github.com/Kolonnade/Portiko/protocol"
 )
 
 // builtinProfiles is the default presentation: the display name and emoji

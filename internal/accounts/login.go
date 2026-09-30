@@ -7,8 +7,8 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/Kolonnade/portico/internal/passkey"
-	"github.com/Kolonnade/portico/internal/store"
+	"github.com/Kolonnade/Portiko/internal/passkey"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // StartLogin issues an assertion challenge.

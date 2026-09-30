@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 
-	"github.com/Kolonnade/portico/internal/store"
-	kitprotocol "github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/internal/store"
+	kitprotocol "github.com/Kolonnade/Portiko/protocol"
 )
 
 const maxAccounts = store.MaxAccountsPerBrowser
@@ -66,7 +66,7 @@ func Router(d Deps) http.Handler {
 	return mux
 }
 
-// Discovery serves the Portico configuration document.
+// Discovery serves the Portiko configuration document.
 type Discovery struct{ cfg *Config }
 
 // Configuration serves the protocol version range. OpenID Connect discovery
@@ -87,11 +87,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// unserved lists discovery fields zitadel/oidc fills in for features Portico
+// unserved lists discovery fields zitadel/oidc fills in for features Portiko
 // does not provide.
 var unserved = []string{"device_authorization_endpoint", "check_session_iframe"}
 
-// servedOnly removes from the OpenID discovery document every endpoint Portico
+// servedOnly removes from the OpenID discovery document every endpoint Portiko
 // does not serve. A client written against discovery takes an advertised URL at
 // its word, so an endpoint appears only in the change that implements it.
 func servedOnly(next http.Handler) http.Handler {

@@ -22,7 +22,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
-	"github.com/Kolonnade/portico/protocol"
+	"github.com/Kolonnade/Portiko/protocol"
 )
 
 // State is a signing key's position in the rotation lifecycle.

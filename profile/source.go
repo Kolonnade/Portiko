@@ -13,8 +13,8 @@ type Presentation struct {
 
 // Source supplies an account's presentation.
 //
-// This is Portico's extension point for what a product means by a profile. The
-// built-in source is a display name and an emoji avatar kept by Portico itself;
+// This is Portiko's extension point for what a product means by a profile. The
+// built-in source is a display name and an emoji avatar kept by Portiko itself;
 // a deployment can replace it with anything that can answer for a subject.
 //
 // UpdatedAt matters more than it looks: sites apply a change only when its

@@ -10,7 +10,7 @@ In a passkey-only system, three situations account for nearly all of it:
 
 ## The ladder
 
-Portico's position, in the order a deployment should rely on them.
+Portiko's position, in the order a deployment should rely on them.
 
 ### 1. A second passkey (the real answer)
 
@@ -105,7 +105,7 @@ Whoever runs the server has database access, so they can always restore an accou
 
 ## What a deployment chooses
 
-Portico ships the ceremony, the codes, the trusted-people flow, the limits, the notifications and the audit trail. A deployment decides the rest:
+Portiko ships the ceremony, the codes, the trusted-people flow, the limits, the notifications and the audit trail. A deployment decides the rest:
 
 - whether recovery codes and trusted people are enabled (both should be)
 - the threshold, the set size, and the length of the veto and cooling windows
@@ -115,4 +115,4 @@ Portico ships the ceremony, the codes, the trusted-people flow, the limits, the 
 
 ## Recovery is not the only survival
 
-Losing an account need not mean losing what you did with it. Where membership in a group is local to that group — as it is in the platform Portico was built for — a local administrator who knows the person can move their membership and history to a new account, independently of anything here. That is a community-layer feature rather than an identity-layer one, and it means the worst case is a lost credential rather than a lost life.
+Losing an account need not mean losing what you did with it. Where membership in a group is local to that group — as it is in the platform Portiko was built for — a local administrator who knows the person can move their membership and history to a new account, independently of anything here. That is a community-layer feature rather than an identity-layer one, and it means the worst case is a lost credential rather than a lost life.
