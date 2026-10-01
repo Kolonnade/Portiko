@@ -32,6 +32,10 @@ type Auth struct {
 	pages    *Pages
 }
 
+// clientIP is the requesting address, with X-Forwarded-For believed only from a
+// configured trusted proxy.
+func (h *Auth) clientIP(r *http.Request) string { return clientIP(h.cfg.TrustedProxies, r) }
+
 // generic is the only failure a client ever sees from the ceremony endpoints.
 //
 // Every cause collapses to one response — unknown account, wrong code, expired
@@ -86,7 +90,7 @@ func (h *Auth) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 	user, amr, err := h.svc.FinishRegistration(r.Context(),
 		[]byte(response.Response.CollectedClientData.Challenge), response,
-		accounts.Caller{IP: clientIP(r), UserAgent: r.UserAgent()})
+		accounts.Caller{IP: h.clientIP(r), UserAgent: r.UserAgent()})
 	if err != nil {
 		generic(w)
 		return
@@ -124,7 +128,7 @@ func (h *Auth) FinishLogin(w http.ResponseWriter, r *http.Request) {
 // browser, and, when the ceremony was part of a site's sign-in, completes that
 // authorization request with it.
 func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *store.User, amr []string) {
-	token, sess, err := h.db.AddSession(r.Context(), browserToken(r), user.ID, amr, r.UserAgent(), clientIP(r))
+	token, sess, err := h.db.AddSession(r.Context(), browserToken(r), user.ID, amr, r.UserAgent(), h.clientIP(r))
 	if errors.Is(err, store.ErrTooManyAccounts) {
 		writeError(w, http.StatusConflict, &kitprotocol.Error{
 			Code:        "too_many_accounts",

@@ -121,7 +121,7 @@ func newHarness(t *testing.T) *harness {
 	if pre, err := store.Open(ctx, cfg.DatabaseURL); err == nil {
 		_, err := pre.Pool().Exec(ctx, `TRUNCATE users, identifiers, passkey_credentials, webauthn_challenges,
 			pending_registrations, sso_sessions, browsers, oauth_clients, auth_requests, refresh_tokens,
-			auth_audit, signing_keys RESTART IDENTITY CASCADE`)
+			auth_audit, signing_keys, rate_counters RESTART IDENTITY CASCADE`)
 		pre.Close()
 		if err != nil {
 			t.Fatalf("truncate: %v", err)
@@ -1377,6 +1377,183 @@ func TestRotationWaitsCoverTheCachesTheyExistFor(t *testing.T) {
 	if keys.PublishDelay < 15*time.Minute {
 		t.Errorf("PublishDelay %s is shorter than the key-set cache lifetime in internal/verify (15m): a new key could sign before verifiers have it",
 			keys.PublishDelay)
+	}
+}
+
+// ---------------------------------------------------------------- rate limits
+
+// The bug: the attempt counter lived on the newest pending_registrations row, so
+// asking for another code created another row with five fresh guesses. Five per
+// code and unlimited codes is the whole six-digit space, in about 200,000
+// requests. AccountsWeb #0012.
+func TestGuessBudgetSurvivesANewCode(t *testing.T) {
+	h := newHarness(t)
+	const email = "guess@example.com"
+
+	requestCode := func() string {
+		r := h.post("/accounts/v1/register/start", map[string]string{"email": email})
+		defer r.Body.Close()
+		if r.StatusCode != http.StatusAccepted {
+			h.t.Fatalf("register/start: %d %s", r.StatusCode, bodyString(t, r))
+		}
+		return h.latestCode(email)
+	}
+	// A guess that cannot be right by luck, so a pass means what it says.
+	notTheCode := func(real string) string {
+		if real == "000000" {
+			return "111111"
+		}
+		return "000000"
+	}
+	guess := func(code string) *http.Response {
+		return h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": code})
+	}
+
+	// Three codes, four wrong guesses each until the ADDRESS budget runs out. Each
+	// new code resets the row counter, which under the old counting was the only
+	// counter there was.
+	spent := 0
+	for round := 0; round < 3 && spent < store.MaxCodeAttemptsPerAddress; round++ {
+		code := requestCode()
+		for i := 0; i < 4 && spent < store.MaxCodeAttemptsPerAddress; i++ {
+			r := guess(notTheCode(code))
+			body := bodyString(t, r)
+			if r.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("wrong guess %d returned %d: %s", spent+1, r.StatusCode, body)
+			}
+			spent++
+		}
+	}
+	if spent != store.MaxCodeAttemptsPerAddress {
+		t.Fatalf("spent %d guesses, expected to reach the address budget of %d", spent, store.MaxCodeAttemptsPerAddress)
+	}
+
+	// A fresh code, whose own row has had no guesses at all. The strongest form of
+	// the assertion: even the CORRECT code is refused, because the budget belongs
+	// to the address and a new code does not refill it.
+	fresh := requestCode()
+	r := guess(fresh)
+	body := bodyString(t, r)
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a new code brought the guess budget back: the correct code returned %d: %s", r.StatusCode, body)
+	}
+	// And the refusal is the same generic one, saying nothing about how far the
+	// guessing got.
+	if strings.Contains(body, "attempt") || strings.Contains(body, "limit") || strings.Contains(body, "too many") {
+		t.Errorf("the refusal reveals the state of the guessing: %s", body)
+	}
+
+	// The counter is on the address, not on the browser: another address is
+	// untouched, and can still complete a registration.
+	if n := h.register("other@example.com"); n != 0 {
+		t.Errorf("a different address was caught by this one's budget (account %d)", n)
+	}
+}
+
+// Asking for codes was unlimited, which is the other half of #0012: the guess
+// budget only helps if codes cannot be requested forever.
+func TestCodeRequestsAreLimitedPerAddressAndStayGeneric(t *testing.T) {
+	h := newHarness(t)
+	// One address with an account, one without. The refusal must not tell them
+	// apart — that difference is an enumeration oracle.
+	h.register("known@example.com")
+	const unknown = "unknown@example.com"
+
+	start := func(email string) *http.Response {
+		return h.post("/accounts/v1/register/start", map[string]string{"email": email})
+	}
+
+	var limitedAt int
+	for i := 1; i <= 20; i++ {
+		r := start(unknown)
+		if r.StatusCode == http.StatusTooManyRequests {
+			limitedAt = i
+			if ra := r.Header.Get("Retry-After"); ra == "" {
+				t.Error("a 429 carries no Retry-After")
+			} else if n, err := strconv.Atoi(ra); err != nil || n <= 0 {
+				t.Errorf("Retry-After is %q, want a positive number of seconds", ra)
+			}
+			r.Body.Close()
+			break
+		}
+		if r.StatusCode != http.StatusAccepted {
+			t.Fatalf("request %d: %d %s", i, r.StatusCode, bodyString(t, r))
+		}
+		r.Body.Close()
+	}
+	if limitedAt == 0 {
+		t.Fatal("twenty code requests for one address were all accepted")
+	}
+	if limitedAt > 20 {
+		t.Fatalf("the limit only bit at request %d", limitedAt)
+	}
+
+	// Exhaust the account that exists too, and compare the two refusals exactly.
+	var knownBody string
+	for i := 0; i < 20; i++ {
+		r := start("known@example.com")
+		b := bodyString(t, r)
+		if r.StatusCode == http.StatusTooManyRequests {
+			knownBody = b
+			break
+		}
+	}
+	if knownBody == "" {
+		t.Fatal("the registered address was never limited")
+	}
+	unknownRefusal := start(unknown)
+	unknownBody := bodyString(t, unknownRefusal)
+	if unknownRefusal.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("the unknown address is no longer limited: %d", unknownRefusal.StatusCode)
+	}
+	if knownBody != unknownBody {
+		t.Errorf("the refusal differs for a known and an unknown address:\n known:   %s\n unknown: %s", knownBody, unknownBody)
+	}
+
+	// A third address still works, so the budget is per address and not a global
+	// stop-the-world.
+	third := start("third@example.com")
+	defer third.Body.Close()
+	if third.StatusCode != http.StatusAccepted {
+		t.Errorf("an untouched address was refused: %d", third.StatusCode)
+	}
+}
+
+// The per-address counter has to be in Postgres rather than in each process:
+// otherwise an attacker spreading requests over two replicas gets each replica's
+// budget. A second provider on the same database stands in for the second replica.
+func TestPerAddressBudgetIsSharedAcrossReplicas(t *testing.T) {
+	h := newHarness(t)
+	const email = "shared@example.com"
+	ctx := context.Background()
+
+	// Spend the address's code-request budget through the first instance.
+	for i := 0; i < 20; i++ {
+		r := h.post("/accounts/v1/register/start", map[string]string{"email": email})
+		code := r.StatusCode
+		r.Body.Close()
+		if code == http.StatusTooManyRequests {
+			break
+		}
+	}
+
+	// A second process, same database, fresh in-process limiter.
+	second, err := provider.New(ctx, h.cfg, provider.Options{Mailer: h.mail})
+	if err != nil {
+		t.Fatalf("second replica: %v", err)
+	}
+	defer second.Close()
+	srv := httptest.NewServer(second.Handler())
+	defer srv.Close()
+
+	blob, _ := json.Marshal(map[string]string{"email": email})
+	resp, err := http.Post(srv.URL+"/accounts/v1/register/start", "application/json", bytes.NewReader(blob))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("a second replica gave the address a fresh budget: %d", resp.StatusCode)
 	}
 }
 

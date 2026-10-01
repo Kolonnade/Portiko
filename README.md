@@ -30,6 +30,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Several signed-in accounts](docs/multiple-accounts.md) — the session model, and how sites, single-page apps and native apps each say which account they mean
 - [Recovery](docs/recovery.md) — losing a passkey, an email, or both: the ladder and the rules every path follows
 - [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
+- [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
 
 ## When there is something to use
 

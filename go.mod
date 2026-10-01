@@ -9,6 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1
+	github.com/sethvargo/go-limiter v1.2.0
 	github.com/zitadel/oidc/v3 v3.51.1
 	golang.org/x/sync v0.23.0
 	golang.org/x/text v0.42.0

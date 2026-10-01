@@ -58,7 +58,12 @@ func (d *DB) SweepExpired(ctx context.Context) (int64, error) {
 	if err != nil {
 		return n, err
 	}
-	return n + tag3.RowsAffected(), nil
+	n += tag3.RowsAffected()
+	counters, err := d.sweepRateCounters(ctx)
+	if err != nil {
+		return n, err
+	}
+	return n + counters, nil
 }
 
 // PendingRegistration is an email awaiting its one-time code.
@@ -82,11 +87,32 @@ func (d *DB) CreatePending(ctx context.Context, p PendingRegistration) error {
 
 // VerifyPendingCode checks a one-time code and consumes the row on success.
 //
-// The attempt counter is incremented inside the same statement that reads the
-// row, so guesses cannot be parallelised: a six-digit code with no bounded
-// attempt count is guessable inside its own lifetime.
+// Two counters bound the guessing, and both are needed:
+//
+//   - The per-row counter, incremented inside the same statement that reads the
+//     row, so guesses against one code cannot be parallelised.
+//   - The per-ADDRESS counter, which is the one the per-row counter alone got
+//     wrong. Asking for another code created another row with five fresh guesses,
+//     so five-per-code plus unlimited codes was the whole six-digit space in about
+//     200,000 requests. This counter is not reset by a new code, by consuming one,
+//     or by a row expiring, because it does not live in the rows. (#0012)
+//
+// The address counter is taken before the row is read, so a guess at an address
+// with no pending code — which is what enumeration looks like — costs the same as
+// any other.
 func (d *DB) VerifyPendingCode(ctx context.Context, email, code string) (*PendingRegistration, error) {
 	email = NormalizeEmail(email)
+
+	// Hashed: this counter must not become a list of the addresses that have been
+	// guessed at, and it only ever needs equality.
+	guess, err := d.Allow(ctx, RateBucketCodeGuess, HashToken(email),
+		MaxCodeAttemptsPerAddress, CodeAttemptWindow)
+	if err != nil {
+		return nil, err
+	}
+	if !guess.OK {
+		return nil, ErrTooManyAttempts
+	}
 
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {

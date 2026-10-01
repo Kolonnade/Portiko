@@ -42,8 +42,24 @@ type Challenge struct {
 // way to sign in.
 var ErrLastCredential = errors.New("store: cannot revoke the last credential")
 
-// MaxCodeAttempts bounds guesses against a single one-time code.
-const MaxCodeAttempts = 5
+// Guess limits on one-time codes.
+//
+// Two numbers rather than one, because the dangerous case is not many guesses at
+// one code — it is a few guesses at each of many codes, which a per-code limit
+// does not see at all.
+const (
+	// MaxCodeAttempts bounds guesses against a single one-time code.
+	MaxCodeAttempts = 5
+	// MaxCodeAttemptsPerAddress bounds guesses against one address across every
+	// code it has been sent, inside CodeAttemptWindow. It survives a new code
+	// being requested, which is what #0012 was: a new code meant a new row and a
+	// fresh set of five.
+	MaxCodeAttemptsPerAddress = 10
+	// CodeAttemptWindow is how long the per-address budget takes to refill. Long
+	// enough that covering the code space is hopeless, short enough that somebody
+	// who genuinely fumbled their code is not locked out for the day.
+	CodeAttemptWindow = time.Hour
+)
 
 // Errors surfaced by the one-time-code and challenge paths.
 //

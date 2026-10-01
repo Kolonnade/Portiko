@@ -3,7 +3,9 @@ package provider
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Kolonnade/Portiko/internal/store"
@@ -103,10 +105,62 @@ func selectAccount(list []account, raw string) (*account, bool) {
 	return a, a != nil
 }
 
-func clientIP(r *http.Request) string {
+// clientIP resolves the address a request came from.
+//
+// X-Forwarded-For is believed only when the connection itself comes from a
+// configured trusted proxy. The header is client-supplied: trusting it
+// unconditionally lets anyone claim any address, which turns a per-IP rate limit
+// into decoration and fills the audit trail with addresses of the attacker's
+// choosing. With nothing configured — the default — only RemoteAddr is used.
+//
+// The walk is right to left. A proxy APPENDS the address it saw, so the rightmost
+// entry is the one added by the proxy closest to this service and the only one
+// not under the client's control. Entries that are themselves trusted proxies are
+// skipped, so a chain of two or three is handled; if every entry is a trusted
+// proxy, the leftmost is as close to the client as this deployment can get.
+func clientIP(trusted []netip.Prefix, r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return ""
+		host = r.RemoteAddr // A test server, or a unix socket: use it as given.
+	}
+	if len(trusted) == 0 || !trustedAddr(trusted, host) {
+		return host
+	}
+	forwarded := r.Header.Values("X-Forwarded-For")
+	var hops []string
+	for _, h := range forwarded {
+		for _, part := range strings.Split(h, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				hops = append(hops, part)
+			}
+		}
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		if _, err := netip.ParseAddr(hops[i]); err != nil {
+			// An unparseable hop means the header cannot be reasoned about at all;
+			// fall back to the connection, which cannot be forged.
+			return host
+		}
+		if !trustedAddr(trusted, hops[i]) {
+			return hops[i]
+		}
+	}
+	if len(hops) > 0 {
+		return hops[0]
 	}
 	return host
+}
+
+func trustedAddr(trusted []netip.Prefix, host string) bool {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap() // So an IPv4-mapped IPv6 address matches an IPv4 prefix.
+	for _, p := range trusted {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }

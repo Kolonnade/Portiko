@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -67,10 +68,20 @@ type Config struct {
 	// development only; Load refuses it when Issuer is https.
 	DevInsecure bool
 
-	// CryptoKey encrypts the authorization codes zitadel/oidc hands out. It must
-	// be the same on every replica and stable across restarts, or a code issued a
-	// moment before a restart stops redeeming. 32 bytes, as hex or base64.
+	// CryptoKey encrypts the authorization codes zitadel/oidc hands out, and the
+	// signing keys at rest. It must be the same on every replica and stable across
+	// restarts, or a code issued a moment before a restart stops redeeming — and
+	// the signing keys stop decrypting. 32 bytes, as hex or base64.
 	CryptoKey [32]byte
+
+	// TrustedProxies are the addresses whose X-Forwarded-For header is believed.
+	//
+	// Empty by default, and that default is the safe one: with nothing listed,
+	// every request's address is its RemoteAddr. Trusting the header from anyone
+	// means a client can claim any address it likes and a per-IP rate limit
+	// becomes decoration. Behind a reverse proxy on the same host, this is
+	// "127.0.0.1,::1"; list a bare address or a CIDR.
+	TrustedProxies []netip.Prefix
 }
 
 const defaultPort = 8090
@@ -145,6 +156,19 @@ func Load() (*Config, error) {
 		problems = append(problems, "DEV_INSECURE must not be set for an https ISSUER")
 	}
 
+	for _, p := range strings.Split(os.Getenv("TRUSTED_PROXIES"), ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		prefix, err := parsePrefix(p)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("TRUSTED_PROXIES: %q is not an IP address or CIDR", p))
+			continue
+		}
+		c.TrustedProxies = append(c.TrustedProxies, prefix)
+	}
+
 	if key, err := decodeKey(os.Getenv("CRYPTO_KEY")); err != nil {
 		problems = append(problems, "CRYPTO_KEY "+err.Error()+" (generate one with: openssl rand -hex 32)")
 	} else {
@@ -162,6 +186,19 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parsePrefix accepts either a CIDR or a bare address, which becomes a prefix
+// covering only itself.
+func parsePrefix(s string) (netip.Prefix, error) {
+	if strings.Contains(s, "/") {
+		return netip.ParsePrefix(s)
+	}
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
 // decodeKey reads a 32-byte key written as hex or base64.

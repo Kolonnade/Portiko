@@ -44,6 +44,7 @@ type Options struct {
 type Provider struct {
 	cfg     *Config
 	db      *store.DB
+	limiter *limiter
 	handler http.Handler
 }
 
@@ -133,9 +134,25 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}
 
+	rl, err := newLimiter(db, cfg, endpointLimits)
+	if err != nil {
+		return fail(err)
+	}
+	// Loud, because the failure mode is not a security hole but an outage: behind
+	// a reverse proxy with nothing trusted, every request's address is the proxy's
+	// loopback address, so one per-IP budget is shared by everybody who uses the
+	// deployment. Trusting the header from anyone would be the other mistake, so
+	// the default stays safe and says so.
+	if len(cfg.TrustedProxies) == 0 && !cfg.DevInsecure {
+		slog.Warn("TRUSTED_PROXIES is not set, so every request's address is its RemoteAddr; "+
+			"behind a reverse proxy that is one address for all callers and the per-IP rate limits are shared",
+			"issuer", cfg.Issuer)
+	}
+
 	return &Provider{
-		cfg: cfg,
-		db:  db,
+		cfg:     cfg,
+		db:      db,
+		limiter: rl,
 		handler: Router(Deps{
 			OpenID:    oidcProvider.HttpHandler(),
 			Discovery: &Discovery{cfg: cfg},
@@ -143,6 +160,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 			Login:     &Login{auth: auth},
 			Pages:     pages,
 			Health:    health,
+			Limiter:   rl,
 		}),
 	}, nil
 }
@@ -153,8 +171,11 @@ func (p *Provider) Handler() http.Handler { return p.handler }
 // DB exposes the store, for operator commands and tests.
 func (p *Provider) DB() *store.DB { return p.db }
 
-// Close releases the database.
-func (p *Provider) Close() { p.db.Close() }
+// Close releases the database and the in-process rate limiters.
+func (p *Provider) Close() {
+	p.limiter.close()
+	p.db.Close()
+}
 
 // Sweep removes lapsed ceremonies, codes and authorization requests until ctx
 // ends.

@@ -21,15 +21,43 @@ type Deps struct {
 	Login     *Login
 	Pages     *Pages
 	Health    http.HandlerFunc
+	Limiter   *limiter
+}
+
+// endpointLimits names each limited endpoint and the budget it gets. The names
+// are the limiter's bucket keys, so each endpoint's budget is its own: exhausting
+// the one on code requests must not also lock a person out of signing in.
+var endpointLimits = map[string]limit{
+	"register.start":  codeRequests,
+	"register.verify": codeVerifications,
+	"login.start":     loginStarts,
+	"login.finish":    loginFinishes,
+	"oauth.token":     tokenRequests,
 }
 
 // Router builds the complete HTTP surface.
 func Router(d Deps) http.Handler {
+	// Unlimited only when a caller built Deps by hand; every path through
+	// provider.New supplies a limiter.
+	rl := d.Limiter
+	limited := func(name string, address func(*http.Request) string, next http.HandlerFunc) http.HandlerFunc {
+		if rl == nil {
+			return next
+		}
+		return rl.wrap(name, endpointLimits[name], address, next)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.Health)
 
 	// The protocol itself comes from zitadel/oidc: authorize, token, userinfo,
 	// revocation, introspection, end session, discovery and the key set.
+	//
+	// The token endpoint is limited per IP and nothing else. Its callers are
+	// relying parties rather than browsers, they arrive from a handful of
+	// addresses, and nothing about a request names an account before the grant is
+	// verified — so there is no address to charge, and the budget is loose enough
+	// that ordinary traffic never meets it.
+	mux.HandleFunc("POST /oauth/token", limited("oauth.token", nil, d.OpenID.ServeHTTP))
 	mux.Handle("/oauth/", d.OpenID)
 	mux.Handle("GET /.well-known/openid-configuration", servedOnly(d.OpenID))
 	mux.Handle("GET /.well-known/jwks.json", d.OpenID)
@@ -43,11 +71,11 @@ func Router(d Deps) http.Handler {
 	api.HandleFunc("GET /accounts/v1/ping", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"protocol": kitprotocol.Name, "version": NegotiatedVersion(r).String()})
 	})
-	api.HandleFunc("POST /accounts/v1/register/start", d.Auth.StartRegistration)
-	api.HandleFunc("POST /accounts/v1/register/verify", d.Auth.VerifyCode)
+	api.HandleFunc("POST /accounts/v1/register/start", limited("register.start", emailFromBody, d.Auth.StartRegistration))
+	api.HandleFunc("POST /accounts/v1/register/verify", limited("register.verify", emailFromBody, d.Auth.VerifyCode))
 	api.HandleFunc("POST /accounts/v1/register/finish", d.Auth.FinishRegistration)
-	api.HandleFunc("GET /accounts/v1/login/start", d.Auth.StartLogin)
-	api.HandleFunc("POST /accounts/v1/login/finish", d.Auth.FinishLogin)
+	api.HandleFunc("GET /accounts/v1/login/start", limited("login.start", emailFromQuery, d.Auth.StartLogin))
+	api.HandleFunc("POST /accounts/v1/login/finish", limited("login.finish", nil, d.Auth.FinishLogin))
 	api.HandleFunc("POST /accounts/v1/logout", d.Auth.Logout)
 	api.HandleFunc("POST /accounts/v1/logout/all", d.Auth.LogoutAll)
 	api.HandleFunc("POST /accounts/v1/default", d.Auth.SetDefault)
