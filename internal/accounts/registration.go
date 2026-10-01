@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
+	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/passkey"
 	"github.com/Kolonnade/Portiko/internal/store"
 )
@@ -138,7 +139,7 @@ func (s *Service) VerifyCode(ctx context.Context, email, code string) (*Verified
 // Everything after the challenge is consumed happens in one transaction inside
 // the store, so a failure part-way leaves no orphaned user, identifier or
 // credential.
-func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, response *protocol.ParsedCredentialCreationData) (*store.User, []string, error) {
+func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, response *protocol.ParsedCredentialCreationData, caller Caller) (*store.User, []string, error) {
 	// Consume first: a DELETE ... RETURNING makes the challenge single-use, and
 	// doing it before the expensive verification means a replayed attestation
 	// cannot even be attempted twice.
@@ -185,7 +186,8 @@ func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, resp
 	}
 
 	var user2 *store.User
-	if pending.Purpose == "recovery" {
+	recovered := pending.Purpose == "recovery"
+	if recovered {
 		existing, err := s.db.ByIdentifier(ctx, "email", pending.Email)
 		if err != nil {
 			logStep(ctx, "register: loading account to extend", err)
@@ -208,7 +210,62 @@ func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, resp
 	if err := s.db.DeletePending(ctx, pending.Token); err != nil {
 		logStep(ctx, "register: deleting pending registration", err)
 	}
+	s.recordEnrollment(ctx, user2, rec, recovered, caller)
 	return user2, AMR(rec.BackupEligible), nil
+}
+
+// recordEnrollment leaves the trail a passkey enrollment owes the account
+// holder: an audit row either way, and — when the account already existed — a
+// notice to the address that authorized it.
+//
+// Both halves run after the credential is committed and neither can fail the
+// ceremony. The passkey is already enrolled by this point; refusing the sign-in
+// because a notice could not be sent would leave the holder with a passkey on
+// their account AND no way in, which is strictly worse than a logged failure.
+//
+// The notice goes only to an account that already existed. A first registration
+// is someone sitting in the flow who has just read the code: telling them what
+// they are doing teaches them to ignore the message that matters.
+func (s *Service) recordEnrollment(ctx context.Context, u *store.User, rec passkey.StoredCredential, recovered bool, caller Caller) {
+	name := passkey.AuthenticatorName(rec.AAGUID)
+	detail := map[string]any{"recovery": recovered}
+	if aaguid := passkey.FormatAAGUID(rec.AAGUID); aaguid != "" {
+		detail["aaguid"] = aaguid
+	}
+	if name != "" {
+		detail["authenticator"] = name
+	}
+	// credential.added is written for a first registration too. An audit trail
+	// with a hole where the account began is one an investigation cannot read
+	// backwards from.
+	s.db.Audit(ctx, store.AuditEvent{
+		UserID: &u.ID, Action: store.AuditCredentialAdded,
+		IP: caller.IP, UserAgent: caller.UserAgent, Detail: detail,
+	})
+	if !recovered {
+		return
+	}
+	s.db.Audit(ctx, store.AuditEvent{
+		UserID: &u.ID, Action: store.AuditAccountRecovered,
+		IP: caller.IP, UserAgent: caller.UserAgent, Detail: detail,
+	})
+
+	// The primary address, not the address the code was sent to. They are the
+	// same today, because recovery resolves the account from a verified email —
+	// but once an account can hold a second address, the notice must reach the
+	// one the holder actually reads, not the one the attacker chose.
+	to, err := s.db.PrimaryEmail(ctx, u.ID)
+	if err != nil {
+		logStep(ctx, "register: finding the address to notify of a new passkey", err)
+		return
+	}
+	if err := s.mailer.SendPasskeyAdded(to, mailer.PasskeyNotice{
+		When:          time.Now(),
+		Authenticator: name,
+		ReviewURL:     s.cfg.Issuer + "/",
+	}); err != nil {
+		logStep(ctx, "register: sending the new-passkey notice", err)
+	}
 }
 
 // passkeyName is the user name and display name a new passkey is created with.

@@ -103,7 +103,8 @@ func (d *DB) RefreshTokenByToken(ctx context.Context, token string) (*RefreshTok
 	if rotatedAt != nil {
 		slog.WarnContext(ctx, "refresh token reused after rotation; family revoked",
 			"client_id", rt.ClientID, "user_id", rt.UserID)
-		d.audit(ctx, &rt.UserID, rt.ClientID, "refresh.reuse_detected", map[string]any{"family": rt.FamilyID})
+		d.Audit(ctx, AuditEvent{UserID: &rt.UserID, ClientID: rt.ClientID,
+			Action: AuditRefreshReuse, Detail: map[string]any{"family": rt.FamilyID}})
 	}
 	return nil, ErrRefreshReused
 }
@@ -164,14 +165,4 @@ func (d *DB) ActiveClientIDs(ctx context.Context, userID int64) ([]string, error
 		return nil, err
 	}
 	return distinctClientIDs(rows)
-}
-
-// audit writes an audit row. A failure is logged, never returned: the audit
-// trail must not be able to break the operation it records.
-func (d *DB) audit(ctx context.Context, userID *int64, clientID, action string, detail map[string]any) {
-	if _, err := d.pool.Exec(ctx,
-		`INSERT INTO auth_audit (user_id, client_id, action, detail) VALUES ($1, NULLIF($2,''), $3, $4)`,
-		userID, clientID, action, detail); err != nil {
-		slog.WarnContext(ctx, "writing audit row", "action", action, "err", err)
-	}
 }

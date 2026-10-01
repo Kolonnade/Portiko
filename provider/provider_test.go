@@ -26,6 +26,7 @@ import (
 	"github.com/descope/virtualwebauthn"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/store"
 	"github.com/Kolonnade/Portiko/migrations"
 	"github.com/Kolonnade/Portiko/provider"
@@ -83,6 +84,7 @@ type harness struct {
 	srv        *httptest.Server
 	db         *store.DB
 	client     *http.Client
+	mail       *fakeMailer
 	rp         virtualwebauthn.RelyingParty
 	auth       virtualwebauthn.Authenticator
 	tokenCalls atomic.Int32
@@ -118,11 +120,12 @@ func newHarness(t *testing.T) *harness {
 			t.Fatalf("truncate: %v", err)
 		}
 	}
-	p, err := provider.New(ctx, cfg, provider.Options{Mailer: silentMailer{}})
+	mail := &fakeMailer{}
+	p, err := provider.New(ctx, cfg, provider.Options{Mailer: mail})
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
-	h := &harness{t: t, srv: srv, db: p.DB()}
+	h := &harness{t: t, srv: srv, db: p.DB(), mail: mail}
 	handler := p.Handler()
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/oauth/token" {
@@ -144,9 +147,64 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-type silentMailer struct{}
+// fakeMailer records what the provider asked to be sent instead of sending it.
+//
+// Recording rather than silently discarding: "no notice was sent" and "a notice
+// was sent to the wrong address" look identical to a mailer that drops
+// everything, and the second is the bug this exists to catch.
+type fakeMailer struct {
+	mu    sync.Mutex
+	codes []string
+	sent  []sentNotice
+}
 
-func (silentMailer) SendCode(string, string) error { return nil }
+type sentNotice struct {
+	to     string
+	notice mailer.PasskeyNotice
+}
+
+func (m *fakeMailer) SendCode(to, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.codes = append(m.codes, to)
+	return nil
+}
+
+func (m *fakeMailer) SendPasskeyAdded(to string, n mailer.PasskeyNotice) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, sentNotice{to: to, notice: n})
+	return nil
+}
+
+func (m *fakeMailer) notices() []sentNotice {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]sentNotice(nil), m.sent...)
+}
+
+// auditRows returns the audit trail's rows for one action, oldest first.
+func (h *harness) auditRows(action string) []auditRow {
+	h.t.Helper()
+	rows, err := h.db.Pool().Query(context.Background(),
+		`SELECT COALESCE(ip::text, ''), COALESCE(user_agent, ''), COALESCE(detail::text, '')
+		   FROM auth_audit WHERE action = $1 ORDER BY id`, action)
+	if err != nil {
+		h.t.Fatalf("reading the audit trail: %v", err)
+	}
+	defer rows.Close()
+	var out []auditRow
+	for rows.Next() {
+		var r auditRow
+		if err := rows.Scan(&r.ip, &r.userAgent, &r.detail); err != nil {
+			h.t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+type auditRow struct{ ip, userAgent, detail string }
 
 func (h *harness) post(path string, body any) *http.Response {
 	h.t.Helper()
@@ -949,6 +1007,83 @@ func TestBrowserCookieIsNeverStoredInPlaintext(t *testing.T) {
 	sessions, err := h.db.Sessions(ctx, cookie)
 	if err != nil || len(sessions) != 1 {
 		t.Fatalf("the cookie resolved %d sessions (err %v), want 1", len(sessions), err)
+	}
+}
+
+// Recovery enrolls a new passkey on an existing account on the strength of
+// reading its email. That is the designed root of trust, so it has to be
+// visible: without a notice, anyone who takes over the mailbox has a permanent,
+// silent passkey, and the holder has nothing to notice. AccountsWeb #0013.
+func TestRecoveryNotifiesTheAccountHolder(t *testing.T) {
+	h := newHarness(t)
+	// A known AAGUID, so the notice can name the authenticator. That half of the
+	// message is what lets a holder recognise an enrollment as their own.
+	h.auth.Aaguid = [16]byte{0xfb, 0xfc, 0x30, 0x07, 0x15, 0x4e, 0x4e, 0xcc,
+		0x8c, 0x0b, 0x6e, 0x02, 0x05, 0x57, 0xd7, 0xbd} // iCloud Keychain
+
+	const email = "recover@example.com"
+	h.register(email)
+
+	// A first registration is the person sitting in the flow. Telling them what
+	// they are doing teaches them to ignore the message that matters.
+	if n := h.mail.notices(); len(n) != 0 {
+		t.Fatalf("a first registration sent %d passkey notices, want 0: %+v", len(n), n)
+	}
+	if rows := h.auditRows(store.AuditAccountRecovered); len(rows) != 0 {
+		t.Errorf("a first registration wrote %d account.recovered rows, want 0", len(rows))
+	}
+	// But it does write credential.added: a trail with a hole where the account
+	// began cannot be read backwards.
+	added := h.auditRows(store.AuditCredentialAdded)
+	if len(added) != 1 {
+		t.Fatalf("a first registration wrote %d credential.added rows, want 1", len(added))
+	}
+
+	// Registering the same address again is recovery, not a second account.
+	h.register(email)
+
+	notices := h.mail.notices()
+	if len(notices) != 1 {
+		t.Fatalf("recovery sent %d passkey notices, want 1: %+v", len(notices), notices)
+	}
+	got := notices[0]
+	if got.to != email {
+		t.Errorf("notice went to %q, want the account's primary address %q", got.to, email)
+	}
+	if got.notice.Authenticator != "iCloud Keychain" {
+		t.Errorf("notice names the authenticator %q, want %q", got.notice.Authenticator, "iCloud Keychain")
+	}
+	if !strings.HasPrefix(got.notice.ReviewURL, h.srv.URL) {
+		t.Errorf("notice points at %q, which is not this deployment", got.notice.ReviewURL)
+	}
+	if got.notice.When.IsZero() {
+		t.Error("notice does not say when the passkey was added")
+	}
+
+	// Two credentials on one account, and the audit trail says how the second
+	// one arrived and from where.
+	var creds int
+	if err := h.db.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM passkey_credentials`).Scan(&creds); err != nil {
+		t.Fatal(err)
+	}
+	if creds != 2 {
+		t.Fatalf("recovery left %d credentials, want 2 on one account", creds)
+	}
+	recovered := h.auditRows(store.AuditAccountRecovered)
+	if len(recovered) != 1 {
+		t.Fatalf("recovery wrote %d account.recovered rows, want 1", len(recovered))
+	}
+	if added = h.auditRows(store.AuditCredentialAdded); len(added) != 2 {
+		t.Fatalf("after recovery there are %d credential.added rows, want 2", len(added))
+	}
+	for _, r := range append(recovered, added[1]) {
+		if r.ip == "" || r.userAgent == "" {
+			t.Errorf("audit row has no caller: ip=%q user_agent=%q", r.ip, r.userAgent)
+		}
+		if !strings.Contains(r.detail, "iCloud Keychain") {
+			t.Errorf("audit detail does not name the authenticator: %s", r.detail)
+		}
 	}
 }
 

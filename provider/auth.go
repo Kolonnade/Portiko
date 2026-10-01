@@ -85,7 +85,8 @@ func (h *Auth) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, amr, err := h.svc.FinishRegistration(r.Context(),
-		[]byte(response.Response.CollectedClientData.Challenge), response)
+		[]byte(response.Response.CollectedClientData.Challenge), response,
+		accounts.Caller{IP: clientIP(r), UserAgent: r.UserAgent()})
 	if err != nil {
 		generic(w)
 		return

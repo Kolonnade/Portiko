@@ -50,6 +50,17 @@ type Service struct {
 	mailer mailer.Mailer
 }
 
+// Caller describes the request a ceremony arrived on.
+//
+// It is passed in rather than read from the context because these two values are
+// what makes an audit row and a security notice answerable — "was this me, from
+// there?" — and a value that must be present is better as a parameter the
+// compiler insists on than as something a handler can forget to attach.
+type Caller struct {
+	IP        string
+	UserAgent string
+}
+
 // New builds the service.
 func New(cfg *config.Config, db *store.DB, wa *webauthn.WebAuthn, m mailer.Mailer) *Service {
 	return &Service{cfg: cfg, db: db, wa: wa, mailer: m}
