@@ -329,6 +329,19 @@ func (h *harness) siteSession(s *site) *session.Session {
 	return nil
 }
 
+// ssoCookie returns the browser cookie the provider set on the harness's client.
+func (h *harness) ssoCookie() string {
+	h.t.Helper()
+	u, _ := url.Parse(h.srv.URL)
+	for _, ck := range h.client.Jar.Cookies(u) {
+		if ck.Name == provider.SSOCookieName {
+			return ck.Value
+		}
+	}
+	h.t.Fatal("the provider set no browser cookie")
+	return ""
+}
+
 func claimsOf(t *testing.T, jwt string) map[string]any {
 	t.Helper()
 	parts := strings.Split(jwt, ".")
@@ -886,6 +899,56 @@ func TestHomeSignalsPasskeyNameOncePerVersion(t *testing.T) {
 	}
 	if os.Getenv("NODE_CHECK") != "" {
 		checkScripts(t, page)
+	}
+}
+
+// The browser cookie is a credential, not an identifier of something harmless:
+// anyone who can set accounts_sso to a value the database holds is signed in as
+// that account. So only its hash is stored, and a dump or a backup is not a set
+// of working cookies.
+func TestBrowserCookieIsNeverStoredInPlaintext(t *testing.T) {
+	h := newHarness(t)
+	h.register("atrest@example.com")
+	cookie := h.ssoCookie()
+	ctx := context.Background()
+
+	// Every column of both tables, not a list of column names: casting the whole
+	// row to text catches a column added later that a test naming them one by one
+	// would quietly stop covering.
+	for _, table := range []string{"sso_sessions", "browsers"} {
+		var leaked int
+		if err := h.db.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM `+table+` t WHERE position($1 in t::text) > 0`, cookie).Scan(&leaked); err != nil {
+			t.Fatalf("scanning %s: %v", table, err)
+		}
+		if leaked != 0 {
+			t.Errorf("%s holds the cookie value in %d row(s)", table, leaked)
+		}
+	}
+
+	// The plaintext column is gone from the schema, not merely left unwritten.
+	var hasToken bool
+	if err := h.db.Pool().QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		                 WHERE table_name = 'sso_sessions' AND column_name = 'token')`).Scan(&hasToken); err != nil {
+		t.Fatal(err)
+	}
+	if hasToken {
+		t.Error("sso_sessions still has a plaintext token column")
+	}
+
+	// What is stored is the hash — and the hash is the lookup key, not a column
+	// written and then ignored: the cookie the browser sent still resolves it.
+	var stored string
+	if err := h.db.Pool().QueryRow(ctx, `SELECT browser_hash FROM sso_sessions`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if want := store.HashToken(cookie); stored != want {
+		t.Errorf("browser_hash is %q, want HashToken(cookie) %q", stored, want)
+	}
+	sessions, err := h.db.Sessions(ctx, cookie)
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("the cookie resolved %d sessions (err %v), want 1", len(sessions), err)
 	}
 }
 
