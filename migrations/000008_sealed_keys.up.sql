@@ -1,0 +1,23 @@
+-- Signing keys are no longer stored as readable PEM.
+--
+-- They are sealed with AES-256-GCM under the deployment's CRYPTO_KEY, which
+-- lives in the service environment and not in the database — the same secret
+-- that already encrypts authorization codes. A backup of this table was a kit
+-- for forging tokens for every site; after this it is not.
+--
+-- The column is renamed because its contents are no longer PEM, and a column
+-- whose name lies about what it holds is how the next person stores plaintext in
+-- it again. Nothing is re-encrypted here: SQL has no access to CRYPTO_KEY.
+-- `portiko seal-keys` encrypts the existing rows in place, keeping each key's
+-- kid, and the service refuses to start on a key it finds in the clear unless
+-- DEV_INSECURE=true.
+--
+-- ORDER MATTERS on a live deployment. This rename makes the column invisible to
+-- any release built before it, so the migration and the new binary land
+-- together, and `seal-keys` runs between the migration and the restart:
+--
+--   migrate up  →  portiko seal-keys  →  restart
+--
+-- Rolling back past this point needs `portiko unseal-keys` BEFORE `migrate
+-- down`, because the down migration cannot decrypt either.
+ALTER TABLE signing_keys RENAME COLUMN private_key_pem TO private_key;

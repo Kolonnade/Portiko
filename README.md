@@ -29,6 +29,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Opinions](docs/opinions.md) — the positions that shape the API
 - [Several signed-in accounts](docs/multiple-accounts.md) — the session model, and how sites, single-page apps and native apps each say which account they mean
 - [Recovery](docs/recovery.md) — losing a passkey, an email, or both: the ladder and the rules every path follows
+- [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
 
 ## When there is something to use
 

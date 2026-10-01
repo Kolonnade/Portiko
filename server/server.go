@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Kolonnade/Portiko/internal/keys"
 	"github.com/Kolonnade/Portiko/internal/store"
 	"github.com/Kolonnade/Portiko/provider"
 )
@@ -42,6 +43,18 @@ func Main(name string, args []string, opts provider.Options) int {
 		err = setClientURI(cmd, args, (*store.DB).SetEventsURI)
 	case "set-scopes":
 		err = setScopes(args)
+	case "keys":
+		err = listKeys(os.Stdout)
+	case "rotate-key":
+		err = rotateKey()
+	case "activate-key":
+		err = activateKey(args)
+	case "retire-key":
+		err = retireKey(args)
+	case "seal-keys":
+		err = sealKeys()
+	case "unseal-keys":
+		err = unsealKeys()
 	default:
 		usage(os.Stdout, name)
 		if cmd != "" && cmd != "help" {
@@ -65,6 +78,17 @@ usage:
   %[1]s set-logout-uri <client-id> <back-channel-logout-uri>
   %[1]s set-events-uri <client-id> <events-uri>
   %[1]s set-scopes <client-id> <scope,scope,...>
+
+  %[1]s keys
+  %[1]s rotate-key
+  %[1]s activate-key [-force] <kid>
+  %[1]s retire-key [-force] <kid>
+  %[1]s seal-keys
+  %[1]s unseal-keys
+
+Rotating the signing key is three steps with a wait between each, because a
+verifier caches the key set and tokens outlive the key that signed them. See
+docs/key-rotation.md.
 
 Configuration comes from the environment; see the Portiko README.
 `, name)
@@ -225,4 +249,159 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// ------------------------------------------------------------------- keys
+//
+// Rotation is three operator steps rather than one command that sleeps, because
+// each phase has to wait for a cache somewhere else to turn over — up to fifteen
+// minutes — and a command holding a terminal open for that long is a command that
+// gets killed half way. Each step prints what to run next.
+//
+// The running service loads its key ring at startup, so it must be restarted
+// after `activate-key` and after `retire-key` before the change is served.
+
+func listKeys(w io.Writer) error {
+	_, db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	ring, err := db.Keys(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(ring) == 0 {
+		fmt.Fprintln(w, "no signing keys yet; one is created at first start")
+		return nil
+	}
+	fmt.Fprintf(w, "%-24s %-9s %-9s %-20s %s\n", "KID", "STATE", "AT REST", "CREATED", "ACTIVATED")
+	for _, k := range ring {
+		atRest := "sealed"
+		if !k.Sealed {
+			atRest = "PLAINTEXT"
+		}
+		fmt.Fprintf(w, "%-24s %-9s %-9s %-20s %s\n",
+			k.KID, k.State, atRest, k.CreatedAt.UTC().Format(time.RFC3339), stamp(k.ActivatedAt))
+	}
+	return nil
+}
+
+func stamp(t *time.Time) string {
+	if t == nil {
+		return "-"
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func rotateKey() error {
+	cfg, db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	k, err := db.BeginRotation(context.Background(), sealer(cfg))
+	if err != nil {
+		return fmt.Errorf("rotate-key: %w", err)
+	}
+	slog.Info("new signing key published, not yet signing", "kid", k.KID, "state", k.State)
+	fmt.Printf(`
+A new key %s is published and is NOT signing yet.
+
+  1. Restart the service so it serves the new key in its key set.
+  2. Wait %s for verifiers' cached key sets to pick it up.
+  3. activate-key %s   — then restart again; the new key starts signing.
+  4. Wait %s for tokens signed by the old key to expire.
+  5. retire-key <old kid>   — then restart again.
+
+Run "keys" at any point to see where the rotation stands.
+`, k.KID, keys.PublishDelay, k.KID, keys.RetireDelay)
+	return nil
+}
+
+func activateKey(args []string) error {
+	kid, force, err := keyArgs("activate-key", args)
+	if err != nil {
+		return err
+	}
+	_, db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := db.ActivateKey(context.Background(), kid, force); err != nil {
+		return fmt.Errorf("activate-key %s: %w", kid, err)
+	}
+	slog.Info("signing key activated; restart the service to sign with it", "kid", kid)
+	return nil
+}
+
+func retireKey(args []string) error {
+	kid, force, err := keyArgs("retire-key", args)
+	if err != nil {
+		return err
+	}
+	_, db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := db.RetireKey(context.Background(), kid, force); err != nil {
+		return fmt.Errorf("retire-key %s: %w", kid, err)
+	}
+	slog.Info("signing key retired; restart the service to drop it from the key set", "kid", kid)
+	return nil
+}
+
+func keyArgs(cmd string, args []string) (kid string, force bool, err error) {
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	f := fs.Bool("force", false, "skip the wait; for a compromised key, at the cost of breaking verifiers or tokens")
+	if err := fs.Parse(args); err != nil {
+		return "", false, err
+	}
+	if fs.NArg() != 1 {
+		return "", false, fmt.Errorf("usage: %s [-force] <kid>", cmd)
+	}
+	return fs.Arg(0), *f, nil
+}
+
+// sealKeys encrypts whatever is still stored in the clear. It is idempotent, so
+// a deploy script can run it every time.
+func sealKeys() error {
+	cfg, db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	done, err := db.SealStoredKeys(context.Background(), sealer(cfg))
+	if err != nil {
+		return fmt.Errorf("seal-keys: %w", err)
+	}
+	if len(done) == 0 {
+		slog.Info("every signing key was already sealed; nothing to do")
+		return nil
+	}
+	slog.Info("signing keys sealed", "kids", done, "count", len(done))
+	return nil
+}
+
+// unsealKeys is for rolling back to a release that cannot read sealed keys, and
+// nothing else. It writes signing keys to the database in the clear.
+func unsealKeys() error {
+	cfg, db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	done, err := db.UnsealStoredKeys(context.Background(), sealer(cfg))
+	if err != nil {
+		return fmt.Errorf("unseal-keys: %w", err)
+	}
+	slog.Warn("signing keys are now stored UNENCRYPTED; this is for a rollback only",
+		"kids", done, "count", len(done))
+	return nil
+}
+
+func sealer(cfg *provider.Config) keys.Sealer {
+	return keys.SealerFor(cfg.CryptoKey, cfg.DevInsecure)
 }

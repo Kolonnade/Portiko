@@ -16,6 +16,7 @@ import (
 
 	"github.com/Kolonnade/Portiko/internal/accounts"
 	"github.com/Kolonnade/Portiko/internal/config"
+	"github.com/Kolonnade/Portiko/internal/keys"
 	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/passkey"
 	"github.com/Kolonnade/Portiko/internal/store"
@@ -63,7 +64,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if err != nil {
 		return fail(err)
 	}
-	ring, err := db.EnsureActiveKey(ctx)
+	ring, err := db.EnsureActiveKey(ctx, keys.SealerFor(cfg.CryptoKey, cfg.DevInsecure))
 	if err != nil {
 		return fail(err)
 	}

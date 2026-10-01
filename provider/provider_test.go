@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -26,8 +27,10 @@ import (
 	"github.com/descope/virtualwebauthn"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Kolonnade/Portiko/internal/keys"
 	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/store"
+	"github.com/Kolonnade/Portiko/internal/verify"
 	"github.com/Kolonnade/Portiko/migrations"
 	"github.com/Kolonnade/Portiko/provider"
 	"github.com/Kolonnade/Portiko/rp"
@@ -80,9 +83,13 @@ func resetSchema(t *testing.T) {
 }
 
 type harness struct {
-	t          *testing.T
-	srv        *httptest.Server
-	db         *store.DB
+	t   *testing.T
+	srv *httptest.Server
+	db  *store.DB
+	cfg *provider.Config
+	// handler is swappable so a test can restart the provider against the same
+	// database on the same URL, which is what a service restart looks like.
+	handler    atomic.Value
 	client     *http.Client
 	mail       *fakeMailer
 	rp         virtualwebauthn.RelyingParty
@@ -125,13 +132,13 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
-	h := &harness{t: t, srv: srv, db: p.DB(), mail: mail}
-	handler := p.Handler()
+	h := &harness{t: t, srv: srv, db: p.DB(), cfg: cfg, mail: mail}
+	h.handler.Store(p.Handler())
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/oauth/token" {
 			h.tokenCalls.Add(1)
 		}
-		handler.ServeHTTP(w, r)
+		h.handler.Load().(http.Handler).ServeHTTP(w, r)
 	})
 	srv.Start()
 	t.Cleanup(func() { srv.Close(); p.Close() })
@@ -314,6 +321,95 @@ func (h *harness) subjectOf(email string) string {
 		h.t.Fatalf("subject of %s: %v", email, err)
 	}
 	return u.Subject
+}
+
+// reload restarts the provider against the same database, on the same URL.
+//
+// The key ring is read once at startup, so a rotation driven through the store is
+// not served until this happens. That is the operational fact the rotation
+// runbook is built around, and a test that reached into the live ring instead
+// would prove something no operator can rely on.
+func (h *harness) reload() {
+	h.t.Helper()
+	cfg, err := provider.LoadConfig()
+	if err != nil {
+		h.t.Fatalf("reload: config: %v", err)
+	}
+	p, err := provider.New(context.Background(), cfg, provider.Options{Mailer: h.mail})
+	if err != nil {
+		h.t.Fatalf("reload: provider: %v", err)
+	}
+	h.t.Cleanup(p.Close)
+	h.handler.Store(p.Handler())
+	h.db, h.cfg = p.DB(), cfg
+}
+
+// sealer is the sealer the running provider reads its keys with.
+func (h *harness) sealer() keys.Sealer {
+	return keys.SealerFor(h.cfg.CryptoKey, h.cfg.DevInsecure)
+}
+
+// kidOf returns the key id a token was signed with.
+func kidOf(t *testing.T, jwt string) string {
+	t.Helper()
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a JWT: %q", jwt)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		KID string `json:"kid"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		t.Fatal(err)
+	}
+	if header.KID == "" {
+		t.Fatalf("token header carries no kid: %s", raw)
+	}
+	return header.KID
+}
+
+// verifiesNow checks a token the way a relying party does: fetch the published
+// key set now, find the key by id, check the signature. A fresh KeySet each time,
+// so the answer is about what the provider publishes at this moment rather than
+// what was cached earlier.
+func (h *harness) verifiesNow(token, clientID string) error {
+	h.t.Helper()
+	set := verify.NewKeySet(h.srv.URL+"/.well-known/jwks.json", nil)
+	set.SetMinInterval(0)
+	_, err := verify.Token(context.Background(), token, verify.Options{
+		Issuer: h.srv.URL, Audience: clientID, Keys: set, Leeway: time.Minute,
+	})
+	return err
+}
+
+// accessToken signs the harness's browser in at a site and returns the access
+// token the site receives.
+func (h *harness) accessToken(s *site) string {
+	h.t.Helper()
+	loc, resp := h.authorize(s.clientID, s.url+"/auth/callback", "openid profile", nil)
+	if loc == nil {
+		h.t.Fatalf("authorize did not reach the client: %d", resp.StatusCode)
+	}
+	code := loc.Query().Get("code")
+	if code == "" {
+		h.t.Fatalf("authorize returned no code: %s", loc)
+	}
+	return h.redeemCode(s, code)["access_token"].(string)
+}
+
+// ringKID is the id of the key the provider is currently signing with.
+func (h *harness) ringKID(t *testing.T) string {
+	t.Helper()
+	var kid string
+	if err := h.db.Pool().QueryRow(context.Background(),
+		`SELECT kid FROM signing_keys WHERE state = 'active'`).Scan(&kid); err != nil {
+		t.Fatal(err)
+	}
+	return kid
 }
 
 // ------------------------------------------------------------------ sites
@@ -1084,6 +1180,203 @@ func TestRecoveryNotifiesTheAccountHolder(t *testing.T) {
 		if !strings.Contains(r.detail, "iCloud Keychain") {
 			t.Errorf("audit detail does not name the authenticator: %s", r.detail)
 		}
+	}
+}
+
+// ------------------------------------------------------- signing keys at rest
+
+// A database backup is something a deployment is right to take. It must not also
+// be a kit for forging tokens for every site. AccountsWeb #0014.
+func TestSigningKeysAreSealedAtRest(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	var kid string
+	var blob []byte
+	if err := h.db.Pool().QueryRow(ctx,
+		`SELECT kid, private_key FROM signing_keys`).Scan(&kid, &blob); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(blob, []byte("PRIVATE KEY")) {
+		t.Fatalf("the signing key is stored as readable PEM: %.40q", blob)
+	}
+	if !keys.Sealed(blob) {
+		t.Fatalf("the stored key does not carry the sealed marker: %.20q", blob)
+	}
+	// Sealed, and sealed with the deployment's key: it comes back as the PEM the
+	// ring signs with.
+	pem, err := h.sealer().Unseal(kid, blob)
+	if err != nil {
+		t.Fatalf("the stored key does not decrypt under CRYPTO_KEY: %v", err)
+	}
+	if !bytes.Contains(pem, []byte("EC PRIVATE KEY")) {
+		t.Fatalf("decrypting did not produce a PEM key: %.40q", pem)
+	}
+
+	// The key id is authenticated, so one row's key cannot be moved onto another
+	// row's id — which would publish a public half that no longer matches.
+	if _, err := h.sealer().Unseal(kid+"x", blob); err == nil {
+		t.Error("a sealed key decrypted under a different kid")
+	}
+	// And a different CRYPTO_KEY cannot read it, which is the whole point.
+	other := keys.Sealer{Secret: [32]byte{1, 2, 3}}
+	if _, err := other.Unseal(kid, blob); err == nil {
+		t.Error("a sealed key decrypted under an unrelated CRYPTO_KEY")
+	}
+}
+
+// A deployment must not run on a plaintext key and look healthy. The refusal is
+// at startup, because that is the only moment anybody is watching.
+func TestStartupRefusesAPlaintextSigningKey(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Put the database back the way issue #0014 found it.
+	unsealed, err := h.db.UnsealStoredKeys(ctx, h.sealer())
+	if err != nil || len(unsealed) != 1 {
+		t.Fatalf("unsealing for the test: %v (%d keys)", err, len(unsealed))
+	}
+
+	// DEV_INSECURE is the harness's default, and it is the one exception: local
+	// development against a database somebody seeded by hand still works.
+	if _, err := provider.New(ctx, h.cfg, provider.Options{Mailer: h.mail}); err != nil {
+		t.Fatalf("DEV_INSECURE=true should tolerate a plaintext key: %v", err)
+	}
+
+	production := *h.cfg
+	production.DevInsecure = false
+	_, err = provider.New(ctx, &production, provider.Options{Mailer: h.mail})
+	if err == nil {
+		t.Fatal("the provider started on a plaintext signing key")
+	}
+	if !errors.Is(err, keys.ErrPlaintextKey) {
+		t.Fatalf("startup failed for the wrong reason: %v", err)
+	}
+
+	// seal-keys closes it, keeping the id — so every token already signed by that
+	// key keeps verifying.
+	before := h.ringKID(t)
+	sealed, err := h.db.SealStoredKeys(ctx, h.sealer())
+	if err != nil || len(sealed) != 1 {
+		t.Fatalf("sealing: %v (%d keys)", err, len(sealed))
+	}
+	if sealed[0] != before {
+		t.Errorf("sealing changed the key id from %s to %s", before, sealed[0])
+	}
+	// After sealing, the key is no longer what startup objects to. (It still
+	// objects: an https issuer is required outside DEV_INSECURE and the harness
+	// serves http. That is a different refusal, and every other test in this file
+	// covers the sealed key starting cleanly.)
+	if _, err := provider.New(ctx, &production, provider.Options{Mailer: h.mail}); errors.Is(err, keys.ErrPlaintextKey) {
+		t.Fatalf("the provider still refuses the signing key after sealing: %v", err)
+	}
+
+	// Sealing twice is a no-op, so a deploy script can run it every time.
+	again, err := h.db.SealStoredKeys(ctx, h.sealer())
+	if err != nil || len(again) != 0 {
+		t.Errorf("sealing again reported %v keys (err %v), want none", again, err)
+	}
+}
+
+// Rotation is three phases with a wait between them, and the waits are the whole
+// point: a key that signs before verifiers have it breaks them, and a key dropped
+// before its tokens expire logs everybody out. AccountsWeb #0014.
+func TestRotationKeepsOldTokensVerifiableUntilTheKeyRetires(t *testing.T) {
+	h := newHarness(t)
+	h.register("rotate@example.com")
+	s := h.newSite("groups")
+	ctx := context.Background()
+
+	token := h.accessToken(s)
+	oldKID := kidOf(t, token)
+	if err := h.verifiesNow(token, s.clientID); err != nil {
+		t.Fatalf("a fresh token does not verify: %v", err)
+	}
+
+	// Phase one: the new key is published and is NOT signing.
+	next, err := h.db.BeginRotation(ctx, h.sealer())
+	if err != nil {
+		t.Fatalf("begin rotation: %v", err)
+	}
+	if next.State != keys.StatePending {
+		t.Fatalf("a new key arrived in state %q, want pending", next.State)
+	}
+	// A second rotation while one is half-done loses track of which key the service
+	// is about to start signing with, so it is refused.
+	if _, err := h.db.BeginRotation(ctx, h.sealer()); !errors.Is(err, store.ErrRotationInFlight) {
+		t.Errorf("starting a second rotation: %v, want ErrRotationInFlight", err)
+	}
+	h.reload()
+	if kidOf(t, h.accessToken(s)) != oldKID {
+		t.Fatal("a pending key signed a token")
+	}
+
+	// Activating before verifiers' caches have turned over is refused.
+	if err := h.db.ActivateKey(ctx, next.KID, false); !errors.Is(err, store.ErrTooSoon) {
+		t.Fatalf("activating a key published seconds ago: %v, want ErrTooSoon", err)
+	}
+
+	// Phase two: forced, because a test cannot wait a quarter of an hour.
+	if err := h.db.ActivateKey(ctx, next.KID, true); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	h.reload()
+	fresh := h.accessToken(s)
+	if got := kidOf(t, fresh); got != next.KID {
+		t.Fatalf("after activation tokens are signed by %s, want the new key %s", got, next.KID)
+	}
+	// The assertion this whole test exists for: the old key stopped signing but is
+	// still published, so tokens it signed still verify.
+	if err := h.verifiesNow(token, s.clientID); err != nil {
+		t.Fatalf("a token signed by the previous key stopped verifying while that key was only retiring: %v", err)
+	}
+	if err := h.verifiesNow(fresh, s.clientID); err != nil {
+		t.Fatalf("a token signed by the new key does not verify: %v", err)
+	}
+
+	// Phase three: retiring before the old tokens expire is refused too.
+	if err := h.db.RetireKey(ctx, oldKID, false); !errors.Is(err, store.ErrTooSoon) {
+		t.Fatalf("retiring a key that stopped signing seconds ago: %v, want ErrTooSoon", err)
+	}
+	if err := h.db.RetireKey(ctx, oldKID, true); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	h.reload()
+	if err := h.verifiesNow(token, s.clientID); err == nil {
+		t.Fatal("a token signed by a retired key still verifies")
+	}
+	if err := h.verifiesNow(fresh, s.clientID); err != nil {
+		t.Fatalf("retiring the old key broke the new one: %v", err)
+	}
+
+	// The listing an operator reads to see where a rotation stands.
+	ring, err := h.db.Keys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]keys.State{}
+	for _, k := range ring {
+		states[k.KID] = k.State
+		if !k.Sealed {
+			t.Errorf("key %s is listed as stored in the clear", k.KID)
+		}
+	}
+	if states[oldKID] != keys.StateRetired || states[next.KID] != keys.StateActive {
+		t.Fatalf("after a full rotation the ring is %v", states)
+	}
+}
+
+// The two rotation waits are not arbitrary numbers; each tracks something real.
+// If one of those moves and this is not updated, a rotation silently stops
+// waiting long enough.
+func TestRotationWaitsCoverTheCachesTheyExistFor(t *testing.T) {
+	if keys.RetireDelay < provider.AccessTokenTTL {
+		t.Errorf("RetireDelay %s is shorter than the longest token lifetime %s: retiring a key would invalidate live tokens",
+			keys.RetireDelay, provider.AccessTokenTTL)
+	}
+	if keys.PublishDelay < 15*time.Minute {
+		t.Errorf("PublishDelay %s is shorter than the key-set cache lifetime in internal/verify (15m): a new key could sign before verifiers have it",
+			keys.PublishDelay)
 	}
 }
 
