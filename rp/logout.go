@@ -8,7 +8,7 @@ import (
 
 	"github.com/Kolonnade/Portiko/protocol"
 	"github.com/Kolonnade/Portiko/rp/session"
-	"github.com/Kolonnade/Portiko/internal/verify"
+	"github.com/Kolonnade/Portiko/verify"
 )
 
 // BackchannelLogoutHandler receives OpenID Connect back-channel logout tokens

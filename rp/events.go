@@ -10,7 +10,7 @@ import (
 
 	"github.com/Kolonnade/Portiko/protocol"
 	"github.com/Kolonnade/Portiko/rp/session"
-	"github.com/Kolonnade/Portiko/internal/verify"
+	"github.com/Kolonnade/Portiko/verify"
 )
 
 // EventsHandler receives Security Event Tokens pushed by the accounts service

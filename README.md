@@ -37,7 +37,8 @@ Written ahead of the code, so the implementation has something to be checked aga
 - `provider` — run the identity provider.
 - `rp` — sign a site in with it.
 - `rp/session` — server-side sessions for that site.
-- A token verifier for APIs — planned; today it is `internal/verify`.
+- `verify` — check Portiko tokens on an API: access tokens, logout and event tokens, with a cached key set.
+- `verify/verifytest` — mint test tokens against an in-process key, no provider needed.
 
 Import these; don't copy them. If you need something under `internal/`, open an issue asking for a public API.
 

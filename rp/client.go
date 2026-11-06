@@ -28,9 +28,9 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/Kolonnade/Portiko/internal/verify"
 	"github.com/Kolonnade/Portiko/protocol"
 	"github.com/Kolonnade/Portiko/rp/session"
+	"github.com/Kolonnade/Portiko/verify"
 )
 
 // Config configures a relying party.
@@ -276,7 +276,7 @@ func (c *Client) finishSignIn(w http.ResponseWriter, r *http.Request, tokens *oi
 }
 
 func (c *Client) verifyAccess(ctx context.Context, token string) (*verify.Claims, error) {
-	return verify.Token(ctx, token, verify.Options{
+	return verify.AccessToken(ctx, token, verify.Options{
 		Issuer: c.issuer, Audience: c.cfg.ClientID, Keys: c.keys, Leeway: leeway,
 	})
 }

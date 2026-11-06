@@ -15,7 +15,7 @@ const (
 	// PublishDelay is how long a new key must be in the published key set before
 	// it starts signing. A verifier caches the key set, so a key that signs the
 	// moment it is created signs tokens that cached verifiers cannot check. It
-	// matches the key-set cache lifetime in internal/verify (15 minutes), which
+	// matches the key-set cache lifetime in verify (15 minutes), which
 	// is the longest a well-behaved verifier can be behind.
 	PublishDelay = 15 * time.Minute
 

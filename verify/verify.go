@@ -1,7 +1,11 @@
-// Package verify checks tokens a relying party receives from anyone who is not
-// the token endpoint: back-channel logout tokens, pushed security events, and
-// bearer tokens on a site's own API. Those arrive from the network, so every
-// check here assumes the token may be hostile.
+// Package verify checks Portiko tokens wherever they arrive from the network:
+// at a relying party (back-channel logout tokens, pushed security events) and
+// at a resource-server API (bearer access tokens). Every check here assumes the
+// token may be hostile.
+//
+// APIs should build a Verifier with New and call Verify on each bearer token.
+// Verify applies the access-token profile: an ID token, refresh token, logout
+// token or event token is refused even when its signature is good.
 package verify
 
 import (
@@ -18,6 +22,25 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 
 	"github.com/Kolonnade/Portiko/protocol"
+)
+
+// DefaultLeeway is the clock skew a Verifier allows unless told otherwise.
+const DefaultLeeway = 60 * time.Second
+
+// Errors returned by this package, wrapped with detail. Test with errors.Is.
+var (
+	ErrConfig         = errors.New("verify: incomplete configuration")
+	ErrMalformed      = errors.New("verify: malformed token")
+	ErrType           = errors.New("verify: wrong token type")
+	ErrUnknownKey     = errors.New("verify: unknown signing key")
+	ErrKeySet         = errors.New("verify: key set unavailable")
+	ErrSignature      = errors.New("verify: bad signature")
+	ErrIssuer         = errors.New("verify: wrong issuer")
+	ErrAudience       = errors.New("verify: wrong audience")
+	ErrExpired        = errors.New("verify: token expired")
+	ErrNotYetValid    = errors.New("verify: token not yet valid")
+	ErrMissingClaim   = errors.New("verify: required claim missing")
+	ErrNotAccessToken = errors.New("verify: not an access token")
 )
 
 // KeySet fetches and caches the issuer's public keys.
@@ -50,7 +73,11 @@ func NewKeySet(url string, client *http.Client) *KeySet {
 }
 
 // SetMinInterval changes the refetch limit. Tests only.
-func (k *KeySet) SetMinInterval(d time.Duration) { k.minInterval = d }
+func (k *KeySet) SetMinInterval(d time.Duration) {
+	k.mu.Lock()
+	k.minInterval = d
+	k.mu.Unlock()
+}
 
 // Key returns the public key for kid.
 func (k *KeySet) Key(ctx context.Context, kid string) (*jose.JSONWebKey, error) {
@@ -77,25 +104,25 @@ func (k *KeySet) Key(ctx context.Context, kid string) (*jose.JSONWebKey, error) 
 	if key, ok := k.keys[kid]; ok {
 		return key, nil
 	}
-	return nil, fmt.Errorf("verify: no key for kid %q", kid)
+	return nil, fmt.Errorf("%w: no key for kid %q", ErrUnknownKey, kid)
 }
 
 func (k *KeySet) refresh(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrKeySet, err)
 	}
 	resp, err := k.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("verify: fetching keys: %w", err)
+		return fmt.Errorf("%w: fetching keys: %v", ErrKeySet, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("verify: keys endpoint returned %s", resp.Status)
+		return fmt.Errorf("%w: keys endpoint returned %s", ErrKeySet, resp.Status)
 	}
 	var set jose.JSONWebKeySet
 	if err := json.NewDecoder(http.MaxBytesReader(nil, resp.Body, 1<<20)).Decode(&set); err != nil {
-		return fmt.Errorf("verify: decoding keys: %w", err)
+		return fmt.Errorf("%w: decoding keys: %v", ErrKeySet, err)
 	}
 	keys := map[string]*jose.JSONWebKey{}
 	for i := range set.Keys {
@@ -112,7 +139,7 @@ func (k *KeySet) refresh(ctx context.Context) error {
 		keys[jwk.KeyID] = &jwk
 	}
 	if len(keys) == 0 {
-		return errors.New("verify: key set contained no usable keys")
+		return fmt.Errorf("%w: key set contained no usable keys", ErrKeySet)
 	}
 	k.mu.Lock()
 	k.keys, k.fetchedAt = keys, time.Now()
@@ -120,14 +147,17 @@ func (k *KeySet) refresh(ctx context.Context) error {
 	return nil
 }
 
-// Options are the checks applied to a token. None is optional.
+// Options are the checks applied to a token. Issuer, Audience and Keys are
+// required.
 type Options struct {
 	Issuer   string
-	Audience string // this relying party's client_id
+	Audience string // this relying party's client_id, or this API's audience
 	Keys     *KeySet
 	Leeway   time.Duration
 	// Type, when set, must equal the token's typ header, so one kind of token
-	// cannot be replayed as another.
+	// cannot be replayed as another. When empty, Token does not check typ:
+	// callers verifying bearer tokens must use AccessToken instead, which always
+	// does.
 	Type string
 }
 
@@ -156,25 +186,67 @@ type Claims struct {
 // must carry exactly one audience equal to Options.Audience, and expiry is
 // required.
 func Token(ctx context.Context, raw string, opts Options) (*Claims, error) {
+	var types []string
+	if opts.Type != "" {
+		types = []string{opts.Type}
+	}
+	return parse(ctx, raw, opts, types)
+}
+
+// accessTypes are the typ headers an access token may carry.
+var accessTypes = []string{"JWT", "at+jwt"}
+
+// idTokenMarkers are claims only an ID token or event token carries.
+var idTokenMarkers = []string{"at_hash", "c_hash", "azp", protocol.ClaimNonce, protocol.ClaimEvents}
+
+// AccessToken verifies a bearer access token: everything Token checks, plus
+// typ must be JWT or at+jwt (Options.Type is ignored), the token must carry a
+// jti, and it must carry none of the claims that mark an ID token or event
+// token. Scope is not required.
+func AccessToken(ctx context.Context, raw string, opts Options) (*Claims, error) {
+	c, err := parse(ctx, raw, opts, accessTypes)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range idTokenMarkers {
+		if _, ok := c.Raw[k]; ok {
+			return nil, fmt.Errorf("%w: carries %q", ErrNotAccessToken, k)
+		}
+	}
+	if c.TokenID == "" {
+		return nil, fmt.Errorf("%w: jti", ErrMissingClaim)
+	}
+	return c, nil
+}
+
+// parse verifies raw. types nil means any typ is accepted.
+func parse(ctx context.Context, raw string, opts Options, types []string) (*Claims, error) {
 	if opts.Issuer == "" || opts.Audience == "" || opts.Keys == nil {
-		return nil, errors.New("verify: Issuer, Audience and Keys are all required")
+		return nil, fmt.Errorf("%w: Issuer, Audience and Keys are all required", ErrConfig)
 	}
 	jws, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.ES256})
 	if err != nil {
-		return nil, fmt.Errorf("verify: parsing: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrMalformed, err)
 	}
 	if len(jws.Signatures) != 1 {
-		return nil, errors.New("verify: expected exactly one signature")
+		return nil, fmt.Errorf("%w: expected exactly one signature", ErrMalformed)
 	}
 	header := jws.Signatures[0].Header
-	if opts.Type != "" {
+	if types != nil {
 		typ, _ := header.ExtraHeaders[jose.HeaderType].(string)
-		if !strings.EqualFold(typ, opts.Type) {
-			return nil, fmt.Errorf("verify: token type %q, want %q", typ, opts.Type)
+		matched := false
+		for _, want := range types {
+			if strings.EqualFold(typ, want) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("%w: %q, want one of %q", ErrType, typ, types)
 		}
 	}
 	if header.KeyID == "" {
-		return nil, errors.New("verify: token has no kid")
+		return nil, fmt.Errorf("%w: token has no kid", ErrUnknownKey)
 	}
 	key, err := opts.Keys.Key(ctx, header.KeyID)
 	if err != nil {
@@ -182,12 +254,12 @@ func Token(ctx context.Context, raw string, opts Options) (*Claims, error) {
 	}
 	payload, err := jws.Verify(key)
 	if err != nil {
-		return nil, fmt.Errorf("verify: signature: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrSignature, err)
 	}
 
 	var m map[string]any
 	if err := json.Unmarshal(payload, &m); err != nil {
-		return nil, fmt.Errorf("verify: claims: %w", err)
+		return nil, fmt.Errorf("%w: claims: %v", ErrMalformed, err)
 	}
 	c := &Claims{
 		Subject:         str(m, protocol.ClaimSubject),
@@ -203,36 +275,39 @@ func Token(ctx context.Context, raw string, opts Options) (*Claims, error) {
 		Raw:             m,
 	}
 	if c.Issuer != opts.Issuer {
-		return nil, fmt.Errorf("verify: issuer %q, want %q", c.Issuer, opts.Issuer)
+		return nil, fmt.Errorf("%w: %q, want %q", ErrIssuer, c.Issuer, opts.Issuer)
 	}
 	// Exactly one audience. Membership alone would let the holder of a token
 	// meant for two sites present it at either.
 	switch aud := m[protocol.ClaimAudience].(type) {
 	case string:
 		if aud != opts.Audience {
-			return nil, fmt.Errorf("verify: audience %q, want %q", aud, opts.Audience)
+			return nil, fmt.Errorf("%w: %q, want %q", ErrAudience, aud, opts.Audience)
 		}
 	case []any:
 		if len(aud) != 1 || aud[0] != opts.Audience {
-			return nil, fmt.Errorf("verify: token must carry exactly the audience %q", opts.Audience)
+			return nil, fmt.Errorf("%w: token must carry exactly the audience %q", ErrAudience, opts.Audience)
 		}
 	default:
-		return nil, errors.New("verify: token has no audience")
+		return nil, fmt.Errorf("%w: token has no audience", ErrAudience)
 	}
 	now := time.Now()
 	exp, ok := num(m, protocol.ClaimExpiry)
 	if !ok {
-		return nil, errors.New("verify: token has no expiry")
+		return nil, fmt.Errorf("%w: exp", ErrMissingClaim)
 	}
 	c.ExpiresAt = time.Unix(exp, 0)
 	if now.After(c.ExpiresAt.Add(opts.Leeway)) {
-		return nil, errors.New("verify: token expired")
+		return nil, ErrExpired
 	}
 	if iat, ok := num(m, protocol.ClaimIssuedAt); ok && time.Unix(iat, 0).After(now.Add(opts.Leeway)) {
-		return nil, errors.New("verify: token issued in the future")
+		return nil, fmt.Errorf("%w: issued in the future", ErrNotYetValid)
+	}
+	if nbf, ok := num(m, "nbf"); ok && time.Unix(nbf, 0).After(now.Add(opts.Leeway)) {
+		return nil, fmt.Errorf("%w: not before %s", ErrNotYetValid, time.Unix(nbf, 0).UTC().Format(time.RFC3339))
 	}
 	if c.Subject == "" {
-		return nil, errors.New("verify: token has no subject")
+		return nil, fmt.Errorf("%w: sub", ErrMissingClaim)
 	}
 	if v, ok := m[protocol.ClaimEmailVerified].(bool); ok {
 		c.EmailVerified = v

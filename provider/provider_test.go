@@ -30,11 +30,11 @@ import (
 	"github.com/Kolonnade/Portiko/internal/keys"
 	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/store"
-	"github.com/Kolonnade/Portiko/internal/verify"
 	"github.com/Kolonnade/Portiko/migrations"
 	"github.com/Kolonnade/Portiko/provider"
 	"github.com/Kolonnade/Portiko/rp"
 	"github.com/Kolonnade/Portiko/rp/session"
+	"github.com/Kolonnade/Portiko/verify"
 )
 
 func testDatabaseURL() string {
@@ -380,7 +380,7 @@ func (h *harness) verifiesNow(token, clientID string) error {
 	h.t.Helper()
 	set := verify.NewKeySet(h.srv.URL+"/.well-known/jwks.json", nil)
 	set.SetMinInterval(0)
-	_, err := verify.Token(context.Background(), token, verify.Options{
+	_, err := verify.AccessToken(context.Background(), token, verify.Options{
 		Issuer: h.srv.URL, Audience: clientID, Keys: set, Leeway: time.Minute,
 	})
 	return err
@@ -1375,7 +1375,7 @@ func TestRotationWaitsCoverTheCachesTheyExistFor(t *testing.T) {
 			keys.RetireDelay, provider.AccessTokenTTL)
 	}
 	if keys.PublishDelay < 15*time.Minute {
-		t.Errorf("PublishDelay %s is shorter than the key-set cache lifetime in internal/verify (15m): a new key could sign before verifiers have it",
+		t.Errorf("PublishDelay %s is shorter than the key-set cache lifetime in verify (15m): a new key could sign before verifiers have it",
 			keys.PublishDelay)
 	}
 }
