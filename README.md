@@ -32,6 +32,15 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
 - [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
 
+## Packages
+
+- `provider` — run the identity provider.
+- `rp` — sign a site in with it.
+- `rp/session` — server-side sessions for that site.
+- A token verifier for APIs — planned; today it is `internal/verify`.
+
+Import these; don't copy them. If you need something under `internal/`, open an issue asking for a public API.
+
 ## When there is something to use
 
 ```
