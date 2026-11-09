@@ -35,9 +35,9 @@ type Options struct {
 	// Profiles supplies how an account is presented to sites. Nil uses the
 	// built-in display name and emoji avatar.
 	Profiles profile.Source
-	// Mailer delivers one-time codes. Nil uses SMTP when configured, otherwise
-	// the log.
-	Mailer mailer.Mailer
+	// Mailer delivers one-time codes and new-passkey notices. Nil uses SMTP
+	// when configured, otherwise the log.
+	Mailer Mailer
 }
 
 // Provider is a running identity provider.
@@ -49,7 +49,7 @@ type Provider struct {
 }
 
 // New connects to the database, loads or creates the signing key, and builds
-// the HTTP surface. Configuration mistakes fail here rather than at a person's
+// the HTTP surface. The schema must be current: call Migrate first. Configuration mistakes fail here rather than at a person's
 // first sign-in.
 func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	db, err := store.Open(ctx, cfg.DatabaseURL)

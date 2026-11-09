@@ -1,8 +1,9 @@
 // Package migrations holds Portiko's schema as ordered SQL files, in the
 // golang-migrate naming scheme (NNNNNN_name.up.sql / .down.sql).
 //
-// Operators apply them with the migrate CLI; the files are also embedded so a
-// test or a tool can apply them without shipping the directory.
+// Apply runs them against a database, and provider.Migrate and the `portiko
+// migrate` command call it. The golang-migrate CLI reads the same files and
+// the same schema_migrations table, so an operator who prefers it can use it.
 package migrations
 
 import (

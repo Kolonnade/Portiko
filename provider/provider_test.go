@@ -28,9 +28,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Kolonnade/Portiko/internal/keys"
-	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/store"
-	"github.com/Kolonnade/Portiko/migrations"
 	"github.com/Kolonnade/Portiko/provider"
 	"github.com/Kolonnade/Portiko/rp"
 	"github.com/Kolonnade/Portiko/rp/session"
@@ -65,17 +63,7 @@ func resetSchema(t *testing.T) {
 			schemaErr = err
 			return
 		}
-		ups, err := migrations.Up()
-		if err != nil {
-			schemaErr = err
-			return
-		}
-		for _, sql := range ups {
-			if _, err := conn.Exec(ctx, sql); err != nil {
-				schemaErr = err
-				return
-			}
-		}
+		_, schemaErr = provider.Migrate(ctx, testDatabaseURL())
 	})
 	if schemaErr != nil {
 		t.Skipf("test database unavailable (%v); createdb portiko_test", schemaErr)
@@ -85,6 +73,7 @@ func resetSchema(t *testing.T) {
 type harness struct {
 	t   *testing.T
 	srv *httptest.Server
+	p   *provider.Provider
 	db  *store.DB
 	cfg *provider.Config
 	// handler is swappable so a test can restart the provider against the same
@@ -132,7 +121,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
-	h := &harness{t: t, srv: srv, db: p.DB(), cfg: cfg, mail: mail}
+	h := &harness{t: t, srv: srv, p: p, db: p.DB(), cfg: cfg, mail: mail}
 	h.handler.Store(p.Handler())
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/oauth/token" {
@@ -159,6 +148,10 @@ func newHarness(t *testing.T) *harness {
 // Recording rather than silently discarding: "no notice was sent" and "a notice
 // was sent to the wrong address" look identical to a mailer that drops
 // everything, and the second is the bug this exists to catch.
+// fakeMailer names only exported types, so it also proves an importer outside
+// the module can implement provider.Mailer.
+var _ provider.Mailer = (*fakeMailer)(nil)
+
 type fakeMailer struct {
 	mu    sync.Mutex
 	codes []string
@@ -167,7 +160,7 @@ type fakeMailer struct {
 
 type sentNotice struct {
 	to     string
-	notice mailer.PasskeyNotice
+	notice provider.PasskeyNotice
 }
 
 func (m *fakeMailer) SendCode(to, code string) error {
@@ -177,7 +170,7 @@ func (m *fakeMailer) SendCode(to, code string) error {
 	return nil
 }
 
-func (m *fakeMailer) SendPasskeyAdded(to string, n mailer.PasskeyNotice) error {
+func (m *fakeMailer) SendPasskeyAdded(to string, n provider.PasskeyNotice) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sent = append(m.sent, sentNotice{to: to, notice: n})
@@ -342,7 +335,7 @@ func (h *harness) reload() {
 	}
 	h.t.Cleanup(p.Close)
 	h.handler.Store(p.Handler())
-	h.db, h.cfg = p.DB(), cfg
+	h.p, h.db, h.cfg = p, p.DB(), cfg
 }
 
 // sealer is the sealer the running provider reads its keys with.

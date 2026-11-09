@@ -179,3 +179,44 @@ func (d *DB) recipients(ctx context.Context, column string, ids []string) ([]Cli
 	}
 	return out, rows.Err()
 }
+
+// PutClient registers or replaces a client in full, in one statement: unlike
+// UpsertClient it also writes the server-to-server URIs, so a client declared
+// in code at startup ends up exactly as declared. It never changes active, so
+// a client an operator switched off stays off across restarts.
+func (d *DB) PutClient(ctx context.Context, c Client, secret string) error {
+	var hash any
+	if secret != "" {
+		hash = HashToken(secret)
+	}
+	nullable := func(s string) any {
+		if s == "" {
+			return nil
+		}
+		return s
+	}
+	if c.PostLogoutRedirectURIs == nil {
+		c.PostLogoutRedirectURIs = []string{}
+	}
+	_, err := d.pool.Exec(ctx,
+		`INSERT INTO oauth_clients
+		   (client_id, client_secret_hash, audience, display_name, redirect_uris, trust_tier,
+		    allowed_scopes, post_logout_redirect_uris, application_type,
+		    backchannel_logout_uri, events_uri)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT (client_id) DO UPDATE SET
+		   client_secret_hash        = EXCLUDED.client_secret_hash,
+		   audience                  = EXCLUDED.audience,
+		   display_name              = EXCLUDED.display_name,
+		   redirect_uris             = EXCLUDED.redirect_uris,
+		   trust_tier                = EXCLUDED.trust_tier,
+		   allowed_scopes            = EXCLUDED.allowed_scopes,
+		   post_logout_redirect_uris = EXCLUDED.post_logout_redirect_uris,
+		   application_type          = EXCLUDED.application_type,
+		   backchannel_logout_uri    = EXCLUDED.backchannel_logout_uri,
+		   events_uri                = EXCLUDED.events_uri`,
+		c.ClientID, hash, c.Audience, c.DisplayName, c.RedirectURIs, c.TrustTier,
+		c.AllowedScopes, c.PostLogoutRedirectURIs, c.ApplicationType,
+		nullable(c.BackchannelLogoutURI), nullable(c.EventsURI))
+	return err
+}

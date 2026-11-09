@@ -35,6 +35,8 @@ func Main(name string, args []string, opts provider.Options) int {
 	switch cmd {
 	case "serve":
 		err = serve(opts)
+	case "migrate":
+		err = migrate()
 	case "register-client":
 		err = registerClient(name, args)
 	case "set-logout-uri":
@@ -74,6 +76,7 @@ func usage(w io.Writer, name string) {
 
 usage:
   %[1]s serve
+  %[1]s migrate
   %[1]s register-client [-public] [-first-party] [-scopes openid,profile,offline_access] <id> <audience> <redirect-uri> [secret]
   %[1]s set-logout-uri <client-id> <back-channel-logout-uri>
   %[1]s set-events-uri <client-id> <events-uri>
@@ -137,6 +140,21 @@ func serve(opts provider.Options) error {
 	defer cancel()
 	slog.Info("shutting down")
 	return srv.Shutdown(shutdownCtx)
+}
+
+// migrate brings the schema up to date. It reads only DATABASE_URL, so it can
+// run before the rest of the configuration exists.
+func migrate() error {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		return errors.New("DATABASE_URL is required")
+	}
+	v, err := provider.Migrate(context.Background(), url)
+	if err != nil {
+		return err
+	}
+	slog.Info("schema is current", "version", v)
+	return nil
 }
 
 func openStore() (*provider.Config, *store.DB, error) {
