@@ -1,0 +1,132 @@
+{
+  "alias": "portiko",
+  "description": "Portiko conformance harness (docs/conformance.md)",
+  "server": {
+    "discoveryUrl": "https://host.docker.internal:9443/.well-known/openid-configuration"
+  },
+  "client": {
+    "client_id": "conformance-1",
+    "client_secret": "conformance-secret-1-c5d9a0e0f1b24e7a"
+  },
+  "client2": {
+    "client_id": "conformance-2",
+    "client_secret": "conformance-secret-2-8e3b6f0d2a7c41b9"
+  },
+  "browser": [
+    {
+      "match": "https://host.docker.internal:9443/oauth/authorize*",
+      "tasks": [
+        {
+          "task": "Verify Complete",
+          "match": "*/test/*/callback*",
+          "commands": [
+            [
+              "wait",
+              "id",
+              "submission_complete",
+              10
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "override": {
+    "oidcc-ensure-registered-redirect-uri": {
+      "browser": [
+        {
+          "comment": "expect an immediate error page, not a redirect",
+          "match": "https://host.docker.internal:9443/oauth/authorize*",
+          "tasks": [
+            {
+              "task": "Expect redirect uri error page",
+              "match": "https://host.docker.internal:9443/oauth/authorize*",
+              "commands": [
+                [
+                  "wait",
+                  "xpath",
+                  "//*",
+                  10,
+                  "redirect_uri",
+                  "update-image-placeholder"
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "oidcc-ensure-redirect-uri-in-authorization-request": {
+      "browser": [
+        {
+          "comment": "expect an immediate error page, not a redirect",
+          "match": "https://host.docker.internal:9443/oauth/authorize*",
+          "tasks": [
+            {
+              "task": "Expect redirect uri error page",
+              "match": "https://host.docker.internal:9443/oauth/authorize*",
+              "commands": [
+                [
+                  "wait",
+                  "xpath",
+                  "//*",
+                  10,
+                  "redirect_uri",
+                  "update-image-placeholder"
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "oidcc-redirect-uri-query-added": {
+      "browser": [
+        {
+          "comment": "expect an immediate error page, not a redirect",
+          "match": "https://host.docker.internal:9443/oauth/authorize*",
+          "tasks": [
+            {
+              "task": "Expect redirect uri error page",
+              "match": "https://host.docker.internal:9443/oauth/authorize*",
+              "commands": [
+                [
+                  "wait",
+                  "xpath",
+                  "//*",
+                  10,
+                  "redirect_uri",
+                  "update-image-placeholder"
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "oidcc-redirect-uri-query-mismatch": {
+      "browser": [
+        {
+          "comment": "expect an immediate error page, not a redirect",
+          "match": "https://host.docker.internal:9443/oauth/authorize*",
+          "tasks": [
+            {
+              "task": "Expect redirect uri error page",
+              "match": "https://host.docker.internal:9443/oauth/authorize*",
+              "commands": [
+                [
+                  "wait",
+                  "xpath",
+                  "//*",
+                  10,
+                  "redirect_uri",
+                  "update-image-placeholder"
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

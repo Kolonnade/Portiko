@@ -1,0 +1,6 @@
+# Layered over the suite's docker-compose-prebuilt.yml, so the suite's server
+# (and the headless browser inside it) reaches the harness on the guest.
+services:
+  server:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
