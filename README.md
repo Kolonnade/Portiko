@@ -31,6 +31,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Registration](docs/registration.md) — who may create an account: the `REGISTRATION` and `BOOTSTRAP_CODE` settings, and enrolling the first one
 - [Recovery](docs/recovery.md) — losing a passkey, an email, or both: the ladder and the rules every path follows
 - [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
+- [Conformance runs](docs/conformance.md) — the release gate: which OpenID plans, where they run, and the harness that signs the suite in with a virtual passkey
 - [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
 
 ## Packages
