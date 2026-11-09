@@ -45,16 +45,18 @@ func generic(w http.ResponseWriter) {
 	writeError(w, http.StatusUnauthorized, &kitprotocol.Error{Code: "authentication_failed"})
 }
 
-// StartRegistration: POST /accounts/v1/register/start {"email": "..."}
+// StartRegistration: POST /accounts/v1/register/start {"email", "bootstrap_code"?}
 //
 // Always 202, always the same body. Whether the address is new, already
-// registered, or malformed is not disclosed.
+// registered, malformed, or refused for want of the bootstrap code is not
+// disclosed.
 func (h *Auth) StartRegistration(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Email string `json:"email"`
+		Email         string `json:"email"`
+		BootstrapCode string `json:"bootstrap_code"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err == nil {
-		if err := h.svc.StartRegistration(r.Context(), body.Email); err != nil {
+		if err := h.svc.StartRegistration(r.Context(), body.Email, body.BootstrapCode); err != nil {
 			slog.ErrorContext(r.Context(), "register start", "err", err)
 		}
 	}

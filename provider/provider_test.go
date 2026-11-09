@@ -254,7 +254,8 @@ func (h *harness) latestCode(email string) string {
 // returns the account number the browser gave it.
 func (h *harness) register(email string) int {
 	h.t.Helper()
-	if resp := h.post("/accounts/v1/register/start", map[string]string{"email": email}); resp.StatusCode != http.StatusAccepted {
+	start := map[string]string{"email": email, "bootstrap_code": h.cfg.BootstrapCode}
+	if resp := h.post("/accounts/v1/register/start", start); resp.StatusCode != http.StatusAccepted {
 		h.t.Fatalf("register/start: %s", bodyString(h.t, resp))
 	}
 	resp := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": h.latestCode(email)})
@@ -637,6 +638,95 @@ func TestRegistrationStartDoesNotRevealExistingAccounts(t *testing.T) {
 	unknown := h.post("/accounts/v1/register/start", map[string]string{"email": "stranger@example.com"})
 	if kb, ub := bodyString(t, known), bodyString(t, unknown); known.StatusCode != unknown.StatusCode || kb != ub {
 		t.Fatalf("responses differ: %d %q vs %d %q", known.StatusCode, kb, unknown.StatusCode, ub)
+	}
+}
+
+// A configured bootstrap code closes registration: without it a new address
+// gets the usual 202 and nothing else — no pending row, no mail, no code that
+// could be verified — for the first account and every later one. An existing
+// account still recovers without it.
+func TestBootstrapCodeGatesEveryNewAccount(t *testing.T) {
+	const bootstrap = "correct-horse-battery-staple"
+	t.Setenv("BOOTSTRAP_CODE", bootstrap)
+	h := newHarness(t)
+
+	// The first account.
+	h.refused("first@example.com", "")
+	h.refused("first@example.com", "wrong")
+	h.register("first@example.com") // carries h.cfg.BootstrapCode
+
+	// A later account: enrolling the operator must not reopen sign-up.
+	h.refused("second@example.com", "")
+
+	h.stillSignsInAndRecovers("first@example.com")
+}
+
+// Closing registration refuses every new account, even with the right
+// bootstrap code, and leaves existing accounts able to sign in and recover.
+func TestClosedRegistrationRefusesEveryNewAccount(t *testing.T) {
+	const bootstrap = "correct-horse-battery-staple"
+	t.Setenv("BOOTSTRAP_CODE", bootstrap)
+	h := newHarness(t)
+	h.register("operator@example.com")
+
+	t.Setenv("REGISTRATION", "closed")
+	h.reload()
+	h.refused("stranger@example.com", "")
+	h.refused("stranger@example.com", bootstrap)
+
+	h.stillSignsInAndRecovers("operator@example.com")
+}
+
+func (h *harness) pendingRows(email string) int {
+	h.t.Helper()
+	var n int
+	if err := h.db.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM pending_registrations WHERE email = $1`,
+		store.NormalizeEmail(email)).Scan(&n); err != nil {
+		h.t.Fatalf("counting pending rows: %v", err)
+	}
+	return n
+}
+
+func (h *harness) sentCodes() int {
+	h.mail.mu.Lock()
+	defer h.mail.mu.Unlock()
+	return len(h.mail.codes)
+}
+
+// refused asserts that register/start for a new address answered like any
+// other start, yet stored nothing, mailed nothing, and left nothing to verify.
+func (h *harness) refused(email, bootstrap string) {
+	h.t.Helper()
+	before := h.sentCodes()
+	resp := h.post("/accounts/v1/register/start", map[string]string{"email": email, "bootstrap_code": bootstrap})
+	if got := bodyString(h.t, resp); resp.StatusCode != http.StatusAccepted || !strings.Contains(got, "code_sent") {
+		h.t.Fatalf("a refused start must look like any other: %d %q", resp.StatusCode, got)
+	}
+	if n := h.pendingRows(email); n != 0 {
+		h.t.Fatalf("%s: %d pending rows for a refused registration", email, n)
+	}
+	if h.sentCodes() != before {
+		h.t.Fatalf("%s: a code was mailed for a refused registration", email)
+	}
+	if r := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": "000000"}); r.StatusCode == http.StatusOK {
+		h.t.Fatalf("%s: verify succeeded with no pending registration", email)
+	}
+}
+
+// stillSignsInAndRecovers asserts the gate never touches an existing account:
+// its passkey signs in, and recovery is mailed without any bootstrap code.
+func (h *harness) stillSignsInAndRecovers(email string) {
+	h.t.Helper()
+	if r := h.login(email); r.StatusCode != http.StatusOK {
+		h.t.Fatalf("%s: existing passkey no longer signs in: %d %s", email, r.StatusCode, bodyString(h.t, r))
+	}
+	before := h.sentCodes()
+	if r := h.post("/accounts/v1/register/start", map[string]string{"email": email}); r.StatusCode != http.StatusAccepted {
+		h.t.Fatalf("recovery start: %d", r.StatusCode)
+	}
+	if h.pendingRows(email) != 1 || h.sentCodes() != before+1 {
+		h.t.Fatalf("%s: recovery of an existing account must not be gated", email)
 	}
 }
 

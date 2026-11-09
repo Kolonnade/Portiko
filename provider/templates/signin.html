@@ -25,6 +25,8 @@
 <div id="emailStep" class="step">
   <label for="email">Email</label>
   <input id="email" type="email" autocomplete="username webauthn" required>
+  {{if .CodeRequired}}<label for="bootstrap">Invitation code <span class="muted">(new accounts only)</span></label>
+  <input id="bootstrap" type="text" autocomplete="off" spellcheck="false">{{end}}
   <button id="sendCode">Send me a code</button>
 </div>
 
@@ -92,7 +94,7 @@ document.getElementById('sendCode').onclick = async () => {
   if (!email) return;
   await fetch('/accounts/v1/register/start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, bootstrap_code: document.getElementById('bootstrap')?.value.trim() || '' }),
   });
   // Deliberately the same message whether or not the address has an account.
   msg('If that address can receive mail, a code is on its way.');

@@ -2,10 +2,12 @@ package accounts
 
 import (
 	"context"
+	"crypto/subtle"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 
+	"github.com/Kolonnade/Portiko/internal/config"
 	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/passkey"
 	"github.com/Kolonnade/Portiko/internal/store"
@@ -17,7 +19,13 @@ import (
 // registered gets the same response, and is sent a sign-in code rather than a
 // registration code — so the response cannot be used to discover who has an
 // account, and a genuine user who forgot they registered still gets in.
-func (s *Service) StartRegistration(ctx context.Context, email string) error {
+//
+// A NEW account must be allowed by the registration mode (see mayRegister).
+// When it is not, nothing is stored and nothing is sent, but the caller sees the same
+// silence as every other case. An address that already has an account never
+// needs it: that path is recovery, and recovery is never gated on whether
+// registration is open (docs/recovery.md §5).
+func (s *Service) StartRegistration(ctx context.Context, email, bootstrapCode string) error {
 	email = store.NormalizeEmail(email)
 	if email == "" {
 		return nil // Still silent: an empty address reveals nothing either.
@@ -37,6 +45,10 @@ func (s *Service) StartRegistration(ctx context.Context, email string) error {
 		// The address already has an account, so this is really a recovery:
 		// enroll another passkey onto the existing user rather than refusing.
 		purpose = "recovery"
+	}
+	if purpose == "registration" && !s.mayRegister(bootstrapCode) {
+		logStep(ctx, "register: refusing a new account (closed, or without the bootstrap code)", nil)
+		return nil // Same silence: no row, no mail, no hint.
 	}
 
 	ttl := CodeTTL
@@ -279,6 +291,26 @@ func (s *Service) passkeyName(u *store.User) string {
 		return u.DisplayName
 	}
 	return s.cfg.ServiceName
+}
+
+// mayRegister reports whether a new account may be created with this code.
+//
+// In "code" mode the bootstrap code is required for every new account, not
+// only the first: "first account only" would reopen sign-up to anyone the
+// moment the operator enrolled, which is exactly the deployment the code
+// exists to close.
+func (s *Service) mayRegister(code string) bool {
+	switch s.cfg.RegistrationMode() {
+	case config.RegistrationOpen:
+		return true
+	case config.RegistrationCode:
+		want := s.cfg.BootstrapCode
+		// An embedder can build a Config that skips Load's checks; "code"
+		// with no code is closed, never open.
+		return want != "" && subtle.ConstantTimeCompare([]byte(code), []byte(want)) == 1
+	default:
+		return false
+	}
 }
 
 func derefString(s *string) string {

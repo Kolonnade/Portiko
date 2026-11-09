@@ -59,10 +59,22 @@ type Config struct {
 	// second deployment can be rebranded without a fork.
 	TemplateDir string
 
-	// BootstrapCode enrolls the very first account. A fresh deployment has no
-	// users and no passkeys, so without a deliberate bootstrap path there is no
-	// way in at all.
+	// BootstrapCode closes registration. When set, creating a NEW account needs
+	// it — the first account and every one after — so a deployment that is not
+	// meant to be open to anyone with a mailbox can still enroll its operator.
+	// Unset, registration is open. Recovery (another passkey for an existing
+	// account) never needs it.
 	BootstrapCode string
+
+	// Registration says who may create a new account: RegistrationOpen
+	// (anyone who can read the emailed code), RegistrationCode (only with
+	// BootstrapCode) or RegistrationClosed (nobody). Existing accounts sign in
+	// and recover in every mode.
+	//
+	// Empty means "code" when BootstrapCode is set and "open" otherwise, which
+	// is what a deployment written before this setting existed expects. Set it
+	// explicitly, so a missing BOOTSTRAP_CODE cannot quietly open sign-up.
+	Registration string
 
 	// DevInsecure allows http:// origins and drops Secure cookie flags. Local
 	// development only; Load refuses it when Issuer is https.
@@ -85,6 +97,31 @@ type Config struct {
 }
 
 const defaultPort = 8090
+
+const minBootstrapCode = 16
+
+// Registration modes; see Config.Registration.
+const (
+	RegistrationOpen   = "open"
+	RegistrationCode   = "code"
+	RegistrationClosed = "closed"
+)
+
+// RegistrationMode is Registration with the empty default resolved. An
+// unknown value resolves to closed: a typo must never open sign-up.
+func (c *Config) RegistrationMode() string {
+	switch c.Registration {
+	case RegistrationOpen, RegistrationCode, RegistrationClosed:
+		return c.Registration
+	case "":
+		if c.BootstrapCode != "" {
+			return RegistrationCode
+		}
+		return RegistrationOpen
+	default:
+		return RegistrationClosed
+	}
+}
 
 // Load reads and validates configuration, reporting every problem it finds
 // rather than only the first — a half-configured service is otherwise a series
@@ -109,9 +146,31 @@ func Load() (*Config, error) {
 		TemplateDir:   os.Getenv("TEMPLATE_DIR"),
 		BootstrapCode: os.Getenv("BOOTSTRAP_CODE"),
 		DevInsecure:   os.Getenv("DEV_INSECURE") == "true",
+
+		Registration: os.Getenv("REGISTRATION"),
 	}
 
 	var problems []string
+
+	// The code is guessable through register/start by anyone watching their
+	// own mailbox, so it has to be long enough that the rate limits make
+	// guessing hopeless.
+	if c.BootstrapCode != "" && len(c.BootstrapCode) < minBootstrapCode {
+		problems = append(problems, fmt.Sprintf("BOOTSTRAP_CODE must be at least %d characters (generate one with: openssl rand -hex 16)", minBootstrapCode))
+	}
+	switch c.Registration {
+	case "", RegistrationClosed:
+	case RegistrationCode:
+		if c.BootstrapCode == "" {
+			problems = append(problems, "REGISTRATION=code needs BOOTSTRAP_CODE")
+		}
+	case RegistrationOpen:
+		if c.BootstrapCode != "" {
+			problems = append(problems, "REGISTRATION=open ignores BOOTSTRAP_CODE; unset one of them")
+		}
+	default:
+		problems = append(problems, "REGISTRATION must be open, code or closed")
+	}
 
 	if v := os.Getenv("PORT"); v != "" {
 		n, err := strconv.Atoi(v)
