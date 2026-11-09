@@ -67,7 +67,9 @@ tart exec "$VM" true
 # The image's root filesystem does not grow on its own to the new disk size.
 tart exec "$VM" bash -c 'sudo growpart /dev/vda 1 >/dev/null 2>&1; sudo resize2fs /dev/vda1 >/dev/null 2>&1; df -h /' || true
 
-tar -C "$WORK" -cf - in | tart exec -i "$VM" tar -x -C /home/admin
+# COPYFILE_DISABLE: macOS tar otherwise adds AppleDouble ._* files, which the
+# suite then tries to load as keys.
+COPYFILE_DISABLE=1 tar -C "$WORK" -cf - in | tart exec -i "$VM" tar -x -C /home/admin
 tart exec "$VM" env SUITE_IMAGE_TAG="$SUITE_REF" bash /home/admin/in/guest.sh 2>&1 | tee "$WORK/guest.log"
 
 echo "== results -> $OUT"
