@@ -7,7 +7,8 @@ against.
 
 ## Status
 
-**Not yet run.** No release has been tagged. The first will be `v0.1.0` (the
+**Run, not passing.** The first run (2026-11-09, below) stopped on the PKCE
+requirement before most modules ran. No release has been tagged. The first will be `v0.1.0` (the
 repository has no tags; `v0.x` because the embedding API is still moving). It is
 cut from the commit the first passing run tested.
 
@@ -56,8 +57,10 @@ release is not a gate anyone keeps, so the run is automated by a harness:
 - **Signing in.** It wraps the provider's handler. When the suite's browser is
   sent to `GET /signin?authRequestID=…`, the harness runs `login/start` and
   `login/finish?authRequestID=…` in-process with the browser's own cookies and a
-  virtual assertion, then relays the `Set-Cookie` headers and redirects to
-  `/login?authRequestID=…`, just as `signin.html` does after a real passkey.
+  virtual assertion, then relays the `Set-Cookie` headers and redirects to the
+  `redirect` login/finish returns, just as `signin.html` does after a real
+  passkey. (Not to `/login?authRequestID=…`: with `prompt=login` that sends the
+  browser straight back to `/signin`, a loop.)
   Every other request goes straight to the provider.
 - **Clients.** Two confidential, first-party clients (`client_secret_post`, so
   no consent screen) with the redirect URI
@@ -79,5 +82,40 @@ and when. Any `FAILED` blocks the release.
 
 ## Results
 
-None yet. Record each run here: date, Portiko commit, suite version, plan,
-and the outcome per module, with the exported result files kept alongside.
+Record each run here: date, Portiko commit, suite version, plan, and the
+outcome per module, with the exported result files kept alongside.
+
+The harness is `conformance/` (`go test -tags conformance ./conformance/`), and
+a run is `conformance/run-vm.sh` on cameron: a disposable
+`ghcr.io/cirruslabs/ubuntu:24.04` guest, inputs streamed in rather than shared,
+results streamed out, the clone deleted on exit.
+
+### 2026-11-09 — not passing: PKCE
+
+| | |
+|---|---|
+| Portiko | `3fdf98e` |
+| Suite | `release-v5.3.4` (`23353b36`), prebuilt images of the same tag, arm64 |
+| Plans | `oidcc-basic-certification-test-plan[server_metadata=discovery][client_registration=static_client]`, then `oidcc-config-certification-test-plan` |
+| Outcome | Aborted by `run-test-plan.py` after three consecutive INTERRUPTED modules; the Config OP plan never started; nothing exported |
+
+| Module | Result |
+|---|---|
+| `oidcc-server` | INTERRUPTED — authorization refused: `PKCE with code_challenge_method=S256 is required` |
+| `oidcc-response-type-missing` | FINISHED (refused with `invalid_request` as expected) |
+| `oidcc-userinfo-get` | INTERRUPTED — same PKCE refusal |
+| `oidcc-userinfo-post-header` | INTERRUPTED — same PKCE refusal |
+| `oidcc-userinfo-post-body` | INTERRUPTED — same; run aborted here |
+
+Cause: Portiko requires S256 PKCE from every client, confidential ones
+included (`provider/oidc.go`, `CreateAuthorizationRequest`). The suite's OIDC
+OP modules send no PKCE; only `oidcc-ensure-request-with-valid-pkce-succeeds`
+does. So nearly every Basic OP module fails at the authorization endpoint
+until either the requirement or the gate changes. The harness was never asked
+to sign in (0 ceremonies). An earlier attempt the same day, at `3c257e6`, ran
+no module: macOS tar had added AppleDouble `._*` files to the suite's
+`certs-keys`, fixed in `3fdf98e`.
+
+Expected next, from reading the code rather than a run: userinfo returns only
+the openid and profile claims (`SetUserinfoFromToken` ignores the granted
+scopes), so `oidcc-scope-email` is likely to fail once PKCE is settled.
