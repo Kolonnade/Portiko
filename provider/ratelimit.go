@@ -26,6 +26,10 @@ import (
 // address has an account, are all invisible from the outside.
 const ErrRateLimited = "rate_limited"
 
+// ErrRegistrationRefused is the error code a RegistrationPolicy refusal is
+// answered with.
+const ErrRegistrationRefused = "registration_refused"
+
 // Rate limits, per endpoint.
 //
 // The numbers are set for a deployment serving families, not a public sign-up

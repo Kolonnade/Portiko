@@ -41,6 +41,16 @@ type Options struct {
 	// Mailer delivers one-time codes and new-passkey notices. Nil uses SMTP
 	// when configured, otherwise the log.
 	Mailer Mailer
+	// RegistrationPolicy decides at runtime whether an address with no account
+	// may create one. It is called at the start of registration with the
+	// normalized email, before any code is mailed or row stored, and never for
+	// an address that already has an account (recovery is not gated). Deny with
+	// a message to have it shown on the sign-in page; an empty message becomes
+	// "Registration is currently closed.". An error fails closed with a generic
+	// message. It is asked again when the emailed code is verified, so closing
+	// registration also stops sign-ups already in flight. When set it replaces the REGISTRATION / BOOTSTRAP_CODE decision;
+	// nil leaves that setting in charge.
+	RegistrationPolicy RegistrationPolicy
 }
 
 // Provider is a running identity provider.
@@ -92,7 +102,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		profiles = builtinProfiles{db: db}
 	}
 
-	auth := &Auth{cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m), ring: ring, profiles: profiles}
+	auth := &Auth{policySet: opts.RegistrationPolicy != nil, cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m, opts.RegistrationPolicy), ring: ring, profiles: profiles}
 	st := &storage{db: db, ring: ring, cfg: cfg, profiles: profiles, ended: auth.notifyLogout}
 
 	opOpts := []op.Option{
