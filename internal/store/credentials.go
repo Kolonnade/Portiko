@@ -150,6 +150,9 @@ func (d *DB) RenameCredential(ctx context.Context, userID, credentialID int64, n
 		credentialID, userID).Scan(&previous); err != nil {
 		return "", norm(err)
 	}
+	if previous == name {
+		return previous, nil
+	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE passkey_credentials SET device_name = $3 WHERE id = $1 AND user_id = $2`,
 		credentialID, userID, name); err != nil {

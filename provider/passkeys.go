@@ -112,7 +112,8 @@ func (h *Auth) acceptedSignalFor(r *http.Request, userID int64, revokedHandle []
 // A state-changing call must be JSON (a cross-site page cannot send that without
 // a CORS preflight) and must come from this provider's own origin, the same two
 // locks as the profile and sign-in endpoints; the cookie is SameSite=Lax
-// besides. The account is named explicitly, never guessed.
+// besides. A state-changing call must name its account (400 without one); the
+// read-only list may omit it and gets the browser's default account.
 func (h *Auth) passkeyRequest(w http.ResponseWriter, r *http.Request, body any) (*account, bool) {
 	raw := r.URL.Query().Get("account")
 	if body != nil {
@@ -135,10 +136,12 @@ func (h *Auth) passkeyRequest(w http.ResponseWriter, r *http.Request, body any) 
 				Code: kitprotocol.ErrInvalidRequest, Description: "malformed request body"})
 			return nil, false
 		}
-		raw = ""
-		if b.Account != nil {
-			raw = strconv.Itoa(*b.Account)
+		if b.Account == nil {
+			writeError(w, http.StatusBadRequest, &kitprotocol.Error{
+				Code: kitprotocol.ErrInvalidRequest, Description: "account is required"})
+			return nil, false
 		}
+		raw = strconv.Itoa(*b.Account)
 		if p, ok := body.(*string); ok {
 			*p = b.Name
 		}
@@ -216,11 +219,14 @@ func (h *Auth) RenamePasskey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, &kitprotocol.Error{Code: kitprotocol.ErrServerError})
 		return
 	}
-	h.db.Audit(r.Context(), store.AuditEvent{
-		UserID: &a.UserID, Action: store.AuditCredentialRenamed,
-		IP: h.clientIP(r), UserAgent: r.UserAgent(),
-		Detail: map[string]any{"credential_id": id, "from": previous, "to": name},
-	})
+	// Saving the name a passkey already has changes nothing, so it leaves no row.
+	if previous != name {
+		h.db.Audit(r.Context(), store.AuditEvent{
+			UserID: &a.UserID, Action: store.AuditCredentialRenamed,
+			IP: h.clientIP(r), UserAgent: r.UserAgent(),
+			Detail: map[string]any{"credential_id": id, "from": previous, "to": name},
+		})
+	}
 	h.respondPasskeys(w, r, a, nil)
 }
 

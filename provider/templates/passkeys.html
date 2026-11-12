@@ -26,11 +26,11 @@
     <div class="title">{{if .Name}}{{.Name}}{{else}}Passkey{{end}}</div>
     <div class="muted">{{.Provider}} · created <time datetime="{{.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.CreatedAt.Format "2 Jan 2006"}}</time> ·
       {{if .LastUsedAt}}last used <time datetime="{{.LastUsedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.LastUsedAt.Format "2 Jan 2006"}}</time>{{else}}never used{{end}}</div>
-    <div class="actions">
+    <form class="actions" data-rename-form>
       <input type="text" maxlength="{{$.MaxNameLen}}" value="{{.Name}}" aria-label="Passkey name" data-rename-input>
-      <button type="button" data-rename>Rename</button>
+      <button type="submit">Rename</button>
       <button type="button" data-revoke>Remove</button>
-    </div>
+    </form>
   </li>
   {{end}}
 </ul>
@@ -52,24 +52,28 @@ async function call(id, action, body) {
   return { ok: r.ok, out };
 }
 
-document.getElementById('list').addEventListener('click', async e => {
+const list = document.getElementById('list');
+
+// Enter in the name field submits the form, so it renames.
+list.addEventListener('submit', async e => {
+  e.preventDefault();
   const li = e.target.closest('li[data-id]');
-  if (!li) return;
-  const id = li.dataset.id;
-  if (e.target.matches('[data-rename]')) {
-    const name = li.querySelector('[data-rename-input]').value;
-    msg('Saving…');
-    const { ok, out } = await call(id, 'rename', { name });
-    if (!ok) { msg(out.error_description || 'Could not rename the passkey.'); return; }
-    location.reload();
-  } else if (e.target.matches('[data-revoke]')) {
-    if (!confirm('Remove this passkey? Devices that rely on it will no longer be able to sign in.')) return;
-    msg('Removing…');
-    const { ok, out } = await call(id, 'revoke', {});
-    if (!ok) { msg(out.error_description || 'Could not remove the passkey.'); return; }
-    await signalAcceptedPasskeys(out.signal);
-    location.reload();
-  }
+  const name = li.querySelector('[data-rename-input]').value;
+  msg('Saving…');
+  const { ok, out } = await call(li.dataset.id, 'rename', { name });
+  if (!ok) { msg(out.error_description || 'Could not rename the passkey.'); return; }
+  location.reload();
+});
+
+list.addEventListener('click', async e => {
+  if (!e.target.matches('[data-revoke]')) return;
+  const li = e.target.closest('li[data-id]');
+  if (!confirm('Remove this passkey? Devices that rely on it will no longer be able to sign in.')) return;
+  msg('Removing…');
+  const { ok, out } = await call(li.dataset.id, 'revoke', {});
+  if (!ok) { msg(out.error_description || 'Could not remove the passkey.'); return; }
+  await signalAcceptedPasskeys(out.signal);
+  location.reload();
 });
 </script>
 

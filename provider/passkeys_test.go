@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Kolonnade/Portiko/internal/passkey"
+	"github.com/Kolonnade/Portiko/internal/store"
 )
 
 // iCloudAAGUID is in the provider-hint table.
@@ -100,6 +102,18 @@ func (h *harness) addPasskey(email, name, aaguid string) int64 {
 	return 0
 }
 
+func expectStatus(t *testing.T, h *harness, req *http.Request, want int, what string) {
+	t.Helper()
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatalf("%s: %v", what, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != want {
+		t.Errorf("%s: %d, want %d", what, resp.StatusCode, want)
+	}
+}
+
 func passkeyPath(id int64, action string) string {
 	return "/accounts/v1/passkeys/" + strconv.FormatInt(id, 10) + "/" + action
 }
@@ -138,6 +152,9 @@ func TestPasskeysListRenameRevoke(t *testing.T) {
 			}
 			if code, _ := h.postSameOrigin(passkeyPath(second, "rename"), map[string]any{"account": 0, "name": " "}); code != http.StatusBadRequest {
 				t.Errorf("empty name: %d, want 400", code)
+			}
+			if code, _ := h.postSameOrigin(passkeyPath(second, "rename"), map[string]any{"account": 0, "name": "Work Mac"}); code != http.StatusOK {
+				t.Errorf("renaming to the current name: %d", code)
 			}
 			rows := h.auditRows("credential.renamed")
 			if len(rows) != 1 || !strings.Contains(rows[0].detail, `"Work Mac"`) || !strings.Contains(rows[0].detail, `"Laptop"`) || rows[0].userAgent == "" {
@@ -231,14 +248,16 @@ func TestPasskeyEndpointsRequireASessionAndTheSameOrigin(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, h.srv.URL+passkeyPath(id, "revoke"), bytes.NewReader(blob))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://evil.example")
-	if resp, err := h.client.Do(req); err != nil || resp.StatusCode != http.StatusForbidden {
-		t.Errorf("cross-origin revoke: %v %v", err, resp)
-	}
+	expectStatus(t, h, req, http.StatusForbidden, "cross-origin revoke")
 	req, _ = http.NewRequest(http.MethodPost, h.srv.URL+passkeyPath(id, "revoke"), strings.NewReader("account=0"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", h.srv.URL)
-	if resp, err := h.client.Do(req); err != nil || resp.StatusCode != http.StatusUnsupportedMediaType {
-		t.Errorf("form revoke: %v %v", err, resp)
+	expectStatus(t, h, req, http.StatusUnsupportedMediaType, "form revoke")
+	if code, _ := h.postSameOrigin(passkeyPath(id, "revoke"), map[string]any{}); code != http.StatusBadRequest {
+		t.Errorf("revoke without an account: %d, want 400", code)
+	}
+	if code, _ := h.postSameOrigin(passkeyPath(id, "rename"), map[string]any{"name": "X"}); code != http.StatusBadRequest {
+		t.Errorf("rename without an account: %d, want 400", code)
 	}
 	if code, _ := h.postSameOrigin(passkeyPath(id, "revoke"), map[string]any{"account": 7}); code != http.StatusUnauthorized {
 		t.Errorf("an account this browser does not hold: %d", code)
@@ -267,6 +286,56 @@ func TestConcurrentRevokesLeaveOnePasskey(t *testing.T) {
 	wg.Wait()
 	if ok, conflict := count(codes, 200), count(codes, 409); ok != 1 || conflict != 1 {
 		t.Fatalf("revoke statuses = %v, want one 200 and one 409", codes)
+	}
+	if n := len(h.listPasskeys(0)); n != 1 {
+		t.Fatalf("%d passkeys left, want 1", n)
+	}
+}
+
+// Deterministic check that Revoke locks the account's credential rows: with
+// another transaction holding them, Revoke must wait, and when that
+// transaction has deleted one of two, Revoke sees one left and refuses.
+func TestRevokeWaitsForTheAccountsCredentialLock(t *testing.T) {
+	h := newHarness(t)
+	h.register("lock@example.com")
+	a := h.listPasskeys(0)[0].ID
+	b := h.addPasskey("lock@example.com", "Two", iCloudAAGUID)
+	u, err := h.db.ByIdentifier(context.Background(), "email", "lock@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	tx, err := h.db.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT id FROM passkey_credentials WHERE user_id = $1 FOR UPDATE`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { _, err := h.db.Revoke(ctx, u.ID, a); done <- err }()
+	select {
+	case err := <-done:
+		t.Fatalf("Revoke returned (%v) while another transaction held the credential rows", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM passkey_credentials WHERE id = $1`, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, store.ErrLastCredential) {
+			t.Fatalf("Revoke = %v, want ErrLastCredential", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Revoke never finished after the lock was released")
 	}
 	if n := len(h.listPasskeys(0)); n != 1 {
 		t.Fatalf("%d passkeys left, want 1", n)

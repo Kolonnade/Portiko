@@ -22,7 +22,10 @@ table is not guessed at; both read "Unknown".
 
 All are under `/accounts/v1/` and answer in the API's usual JSON, with
 `{"error", "error_description"}` bodies on failure. The account is named
-explicitly (`account` in the query or body), never guessed.
+explicitly. `account` is required in the body of the two POSTs (400
+`invalid_request` without it), so a state-changing call never acts on a guessed
+account. The read-only `GET` and the page may omit it and get the browser's
+default account.
 
 | Request | Does |
 |---|---|
@@ -62,10 +65,14 @@ to `PublicKeyCredential.signalAllAcceptedCredentials`:
 
 One entry per WebAuthn user handle, listing the credentials still valid for it
 (empty if none), so the provider can hide or remove the rest. It is
-feature-detected and best effort: where the browser lacks the API nothing
+feature-detected and best effort. A signal sent while a new passkey is still
+being enrolled on the same handle may briefly hide the new one: where the browser lacks the API nothing
 happens, and the passkey simply remains in that device's list until the person
 deletes it there. A script that calls the API directly can send the same
 signal.
+
+Renaming a passkey to the name it already has changes nothing and writes no
+audit row.
 
 Rename sends **no** signal. WebAuthn has no per-credential name signal;
 `signalCurrentUserDetails` names the account's *user*, which the profile page
