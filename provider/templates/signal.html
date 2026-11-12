@@ -29,4 +29,20 @@ async function signalPasskeyDetailsOnce(s, version) {
   await signalPasskeyDetails(s);
   try { localStorage.setItem(key, stamp); } catch (e) { /* nothing to remember with */ }
 }
+
+// signalAcceptedPasskeys tells the passkey provider which credentials are still
+// valid after one was revoked, so it stops offering the deleted one. The
+// argument is the "signal" a revoke returns: one entry per WebAuthn user handle.
+// Feature-detected and best effort, like the name signal above.
+async function signalAcceptedPasskeys(s) {
+  if (!s || !s.users) return;
+  if (!window.PublicKeyCredential || !PublicKeyCredential.signalAllAcceptedCredentials) return;
+  for (const u of s.users) {
+    try {
+      await PublicKeyCredential.signalAllAcceptedCredentials({
+        rpId: s.rp_id, userId: u.user_id, allAcceptedCredentialIds: u.credential_ids,
+      });
+    } catch (e) { /* best effort; the provider may not hold this handle */ }
+  }
+}
 </script>{{end}}

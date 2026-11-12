@@ -97,6 +97,39 @@ func (p *Pages) ProfileRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, p.cfg.BasePath()+"/u/"+strconv.Itoa(a.Ordinal)+"/profile", http.StatusFound)
 }
 
+// PasskeysRedirect: GET /passkeys — sites link here without knowing numbers.
+func (p *Pages) PasskeysRedirect(w http.ResponseWriter, r *http.Request) {
+	a := defaultAccount(p.auth.accounts(r))
+	if a == nil {
+		http.Redirect(w, r, p.cfg.BasePath()+"/signin?return_to="+url.QueryEscape(p.cfg.BasePath()+"/passkeys"), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, p.cfg.BasePath()+"/u/"+strconv.Itoa(a.Ordinal)+"/passkeys", http.StatusFound)
+}
+
+// Passkeys: GET /u/{n}/passkeys — list, rename and revoke the account's passkeys.
+func (p *Pages) Passkeys(w http.ResponseWriter, r *http.Request) {
+	list := p.auth.accounts(r)
+	a, ok := selectAccount(list, r.PathValue("n"))
+	if !ok {
+		p.stale(w, r, list)
+		return
+	}
+	keys, err := p.auth.db.ListManaged(r.Context(), a.UserID)
+	if err != nil {
+		slog.Error("passkeys: listing", "err", err)
+		p.message(w, http.StatusInternalServerError, "Something went wrong", "Your passkeys could not be loaded. Try again.")
+		return
+	}
+	p.render(w, http.StatusOK, "passkeys.html", map[string]any{
+		"ServiceName": p.cfg.ServiceName,
+		"Account":     a.Ordinal,
+		"SID":         a.SID,
+		"Passkeys":    viewPasskeys(keys),
+		"MaxNameLen":  profile.MaxNameLen,
+	})
+}
+
 // site is one first-party site linked from the home page.
 type site struct{ Name, URL, Host string }
 
