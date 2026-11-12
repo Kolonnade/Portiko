@@ -50,6 +50,28 @@ people, and the path already keeps it apart. At the root the path stays `/`.
 A relying party's own cookies (`accounts_rp_session`, `portiko_rp_flow`) belong
 to the site and stay at `Path=/`.
 
+## Caveats
+
+- With a path issuer, the standalone `portiko` command's health check moves to
+  `/id/health`; `/health` is a 404.
+- `Path=/id` keeps the cookie off requests to the host's own paths. It does not
+  isolate it from same-origin script: a page of the host can `fetch` the
+  provider's API, and the browser attaches the cookie. (HttpOnly still keeps
+  script from reading the value.)
+- The provider's CSRF check on form posts (`sameOrigin`) compares origins, so
+  once embedded, every page of the host counts as same-origin. Do not host
+  untrusted content on the same origin.
+- Moving an existing deployment from the root to a prefix leaves the old
+  `Path=/` `accounts_sso` cookie in browsers. Sign-out clears only the
+  `Path=/id` one and does not clear the old one; it is inert (the new routes
+  never read it at `/`) and expires on its own. A fresh deployment is unaffected.
+- `ISSUER`'s path is validated at startup: segments of letters, digits and
+  `. _ ~ -` only, no empty segments, no trailing slash, no query or fragment.
+- Paths are matched on the segment boundary: `/idx` and `/idhealth` are the
+  host's, not the provider's. A non-clean path under the prefix (`/id//signin`)
+  is redirected (308) to its clean form with the prefix, and `/id` to `/id/`.
+- The conformance harness needs a root issuer.
+
 ## A site on the same origin
 
 `rp` works with an issuer on the site's own origin. Use the issuer with its

@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -96,6 +97,9 @@ type Config struct {
 	// becomes decoration. Behind a reverse proxy on the same host, this is
 	// "127.0.0.1,::1"; list a bare address or a CIDR.
 	TrustedProxies []netip.Prefix
+
+	base    string // BasePath, validated by Load
+	baseSet bool
 }
 
 const defaultPort = 8090
@@ -111,13 +115,40 @@ const (
 
 // BasePath is the path the provider is served under, taken from the issuer:
 // "/id" for https://go.example.com/id, and "" when the issuer has no path. It
-// never ends in a slash, so a route is BasePath() + "/signin".
+// never ends in a slash, so a route is BasePath() + "/signin". Load checks that
+// the path is clean and needs no escaping, so it is the same string whether the
+// request path is compared decoded or encoded.
 func (c *Config) BasePath() string {
-	u, err := url.Parse(c.Issuer)
-	if err != nil {
-		return ""
+	if c.baseSet {
+		return c.base
 	}
-	return strings.TrimRight(u.EscapedPath(), "/")
+	base, _ := basePathOf(strings.TrimSuffix(c.Issuer, "/"))
+	return base
+}
+
+var pathSegment = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
+
+// basePathOf extracts and validates the issuer's path.
+func basePathOf(issuer string) (string, error) {
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return "", fmt.Errorf("ISSUER is not a URL: %v", err)
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", fmt.Errorf("ISSUER must not have a query or fragment")
+	}
+	if u.Path == "" || u.Path == "/" {
+		return "", nil
+	}
+	if u.RawPath != "" && u.RawPath != u.Path {
+		return "", fmt.Errorf("ISSUER path must not need escaping")
+	}
+	for _, seg := range strings.Split(strings.TrimPrefix(u.Path, "/"), "/") {
+		if !pathSegment.MatchString(seg) || seg == "." || seg == ".." {
+			return "", fmt.Errorf("ISSUER path %q must be clean: segments of letters, digits and . _ ~ -, no empty segments or trailing slash", u.Path)
+		}
+	}
+	return u.Path, nil
 }
 
 // RegistrationMode is Registration with the empty default resolved. An
@@ -223,6 +254,11 @@ func Load() (*Config, error) {
 	}
 	if len(c.WebAuthnRPOrigins) == 0 {
 		problems = append(problems, "WEBAUTHN_RP_ORIGINS is required (comma-separated)")
+	}
+	if base, err := basePathOf(c.Issuer); err != nil {
+		problems = append(problems, err.Error())
+	} else {
+		c.base, c.baseSet = base, true
 	}
 	if c.DevInsecure && strings.HasPrefix(c.Issuer, "https://") {
 		problems = append(problems, "DEV_INSECURE must not be set for an https ISSUER")

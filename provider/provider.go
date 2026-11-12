@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
@@ -162,20 +165,31 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 }
 
 // mountedAt serves router under base. At the root (base "") it is router itself.
-// Otherwise it answers only requests under base, strips it before routing, and
-// sends the bare base to base+"/".
+// Otherwise it answers only paths that are base or begin with base+"/" (a plain
+// string prefix would also match /idx and /idhealth), 404s the rest, redirects a
+// path that is not clean (//, /./, /../) to its clean form keeping the prefix,
+// and sends the bare base to base+"/".
 func mountedAt(base string, router http.Handler) http.Handler {
 	if base == "" {
 		return router
 	}
 	strip := http.StripPrefix(base, router)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == base {
-			to := base + "/"
-			if r.URL.RawQuery != "" {
-				to += "?" + r.URL.RawQuery
-			}
-			http.Redirect(w, r, to, http.StatusMovedPermanently)
+		escaped := r.URL.EscapedPath()
+		if escaped != base && !strings.HasPrefix(escaped, base+"/") {
+			http.NotFound(w, r)
+			return
+		}
+		clean := path.Clean(r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/") && clean != "/" {
+			clean += "/"
+		}
+		if clean == base {
+			clean = base + "/"
+		}
+		if clean != r.URL.Path {
+			to := (&url.URL{Path: clean, RawQuery: r.URL.RawQuery}).String()
+			http.Redirect(w, r, to, http.StatusPermanentRedirect)
 			return
 		}
 		strip.ServeHTTP(w, r)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +136,8 @@ func TestProviderEmbeddedUnderAPathPrefix(t *testing.T) {
 	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	if resp, err := noFollow.Get(origin + "/id"); err != nil || resp.StatusCode/100 != 3 || resp.Header.Get("Location") != "/id/" {
 		t.Errorf("GET /id: %v %v", err, resp)
+	} else {
+		resp.Body.Close()
 	}
 
 	// Discovery names the prefix everywhere.
@@ -152,8 +155,10 @@ func TestProviderEmbeddedUnderAPathPrefix(t *testing.T) {
 	if code, b := body(client.Get(doc["jwks_uri"].(string))); code != 200 || !strings.Contains(b, `"keys"`) {
 		t.Errorf("jwks: %d %s", code, b)
 	}
-	if code, b := body(client.Get(origin + "/id/.well-known/portiko-configuration")); code != 200 || !strings.Contains(b, origin+"/id") {
-		t.Errorf("portiko configuration: %d %s", code, b)
+	for _, wk := range []string{"/id/.well-known/portiko-configuration", "/id/.well-known/eureka-accounts-configuration"} {
+		if code, b := body(client.Get(origin + wk)); code != 200 || !strings.Contains(b, origin+"/id") {
+			t.Errorf("%s: %d %s", wk, code, b)
+		}
 	}
 
 	// A signed-out visit to the host ends at the provider's sign-in page, which
@@ -234,8 +239,19 @@ func TestProviderEmbeddedUnderAPathPrefix(t *testing.T) {
 	if code, b := body(resp, nil); code != 200 || !strings.HasPrefix(b, "signed in as ") {
 		t.Fatalf("host /me: %d %q", code, b)
 	}
-	// Everything the browser saw of the host is intact, and the provider's
-	// cookie never went to a host path.
+	// The browser holds the provider's cookie for /id and sends none to the host.
+	hasSSO := func(path string) bool {
+		u, _ := url.Parse(origin + path)
+		for _, c := range jar.Cookies(u) {
+			if c.Name == provider.SSOCookieName {
+				return true
+			}
+		}
+		return false
+	}
+	if hasSSO("/") || hasSSO("/me") || !hasSSO("/id/") {
+		t.Errorf("cookie scope: sent to / = %v, /me = %v, /id/ = %v", hasSSO("/"), hasSSO("/me"), hasSSO("/id/"))
+	}
 	if code, b := body(client.Get(origin + "/health")); code != 200 || b != "host health" {
 		t.Errorf("host /health after sign-in: %d %q", code, b)
 	}
@@ -254,29 +270,127 @@ func TestProviderEmbeddedUnderAPathPrefix(t *testing.T) {
 		}
 	}
 	// A form-post sign-out returns to the prefixed sign-in page and clears the cookie.
-	resp, err = noFollow.Do(mustRequest(t, origin+"/id/accounts/v1/logout", sso))
+	jarNoFollow := &http.Client{Jar: jar, CheckRedirect: noFollow.CheckRedirect}
+	resp, err = jarNoFollow.Post(origin+"/id/accounts/v1/logout", "application/x-www-form-urlencoded", strings.NewReader(""))
 	if err != nil {
 		t.Fatal(err)
 	}
+	resp.Body.Close()
 	if loc := resp.Header.Get("Location"); loc != "/id/signin" {
 		t.Errorf("sign-out redirected to %q, want /id/signin", loc)
 	}
+	var cleared *http.Cookie
 	for _, c := range resp.Cookies() {
-		if c.Name == provider.SSOCookieName && c.Path != "/id" {
-			t.Errorf("cleared cookie Path = %q, want /id", c.Path)
+		if c.Name == provider.SSOCookieName {
+			cleared = c
 		}
 	}
-}
+	if cleared == nil || cleared.MaxAge >= 0 || cleared.Path != "/id" {
+		t.Errorf("sign-out cookie = %+v, want a clearing cookie (MaxAge<0) at Path=/id", cleared)
+	}
+	if hasSSO("/id/") {
+		t.Error("the browser still holds the cookie after sign-out")
+	}
 
-func mustRequest(t *testing.T, url string, c *http.Cookie) *http.Request {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(""))
+	// Sign in again with the same passkey, through the host and rp.
+	authenticator.AddCredential(cred)
+	resp, err = client.Get(origin + "/auth/login?return_to=/me")
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(c)
-	return req
+	resp.Body.Close()
+	authID = resp.Request.URL.Query().Get("authRequestID")
+	if resp.Request.URL.Path != "/id/signin" || authID == "" {
+		t.Fatalf("second sign-in ended at %s", resp.Request.URL)
+	}
+	_, startBody := body(client.Get(origin + "/id/accounts/v1/login/start"))
+	aopts, err := virtualwebauthn.ParseAssertionOptions(startBody)
+	if err != nil {
+		t.Fatalf("login/start: %v: %s", err, startBody)
+	}
+	found := authenticator.FindAllowedCredential(*aopts)
+	if found == nil {
+		found = &authenticator.Credentials[0]
+	}
+	assertion := virtualwebauthn.CreateAssertionResponse(vrp, authenticator, *found, *aopts)
+	lf := post("/id/accounts/v1/login/finish?authRequestID="+authID, []byte(assertion))
+	out.Redirect = ""
+	_ = json.NewDecoder(lf.Body).Decode(&out)
+	lf.Body.Close()
+	if lf.StatusCode != 200 || !strings.HasPrefix(out.Redirect, origin+"/id/oauth/authorize/callback") {
+		t.Fatalf("login/finish: %d redirect %q", lf.StatusCode, out.Redirect)
+	}
+	resp, err = client.Get(out.Redirect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, b := body(resp, nil); resp.Request.URL.Path != "/me" || code != 200 || !strings.HasPrefix(b, "signed in as ") {
+		t.Fatalf("passkey sign-in: %s %d %q", resp.Request.URL, code, b)
+	}
+	if !hasSSO("/id/") || hasSSO("/") {
+		t.Error("cookie scope after the second sign-in")
+	}
+}
+
+// Mounted at the root of a server, as the portiko command does, the handler
+// answers only the prefix on a segment boundary and never redirects out of it.
+func TestPrefixedHandlerMountedAtTheRoot(t *testing.T) {
+	resetSchema(t)
+	ctx := context.Background()
+	srv := httptest.NewUnstartedServer(nil)
+	origin := "http://" + srv.Listener.Addr().String()
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	t.Setenv("ISSUER", origin+"/id")
+	t.Setenv("DATABASE_URL", testDatabaseURL())
+	t.Setenv("WEBAUTHN_RP_ID", "localhost")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", origin)
+	t.Setenv("DEV_INSECURE", "true")
+	t.Setenv("CRYPTO_KEY", hex.EncodeToString(key))
+	cfg, err := provider.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn, err := pgx.Connect(ctx, cfg.DatabaseURL); err == nil {
+		_, err := conn.Exec(ctx, `TRUNCATE users, identifiers, passkey_credentials, webauthn_challenges,
+			pending_registrations, sso_sessions, browsers, oauth_clients, auth_requests, refresh_tokens,
+			auth_audit, signing_keys, rate_counters RESTART IDENTITY CASCADE`)
+		conn.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := provider.New(ctx, cfg, provider.Options{Mailer: &fakeMailer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	srv.Config.Handler = p.Handler()
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, tc := range []struct {
+		path     string
+		code     int
+		location string
+	}{
+		{"/idx", 404, ""}, {"/idx/foo", 404, ""}, {"/idhealth", 404, ""}, {"/health", 404, ""},
+		{"/signin", 404, ""}, {"/id%2Fsignin", 404, ""},
+		{"/id/health", 200, ""}, {"/id/signin", 200, ""},
+		{"/id//signin", 308, "/id/signin"}, {"/id/./signin", 308, "/id/signin"},
+		{"/id/x/../signin", 308, "/id/signin"},
+		{"/id", 308, "/id/"}, {"/id?x=1", 308, "/id/?x=1"},
+	} {
+		resp, err := c.Get(origin + tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != tc.code || resp.Header.Get("Location") != tc.location {
+			t.Errorf("GET %s = %d Location %q, want %d %q", tc.path, resp.StatusCode, resp.Header.Get("Location"), tc.code, tc.location)
+		}
+	}
 }
 
 func codeFor(t *testing.T, p *provider.Provider, email string) string {
