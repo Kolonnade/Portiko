@@ -92,10 +92,16 @@ document.getElementById('usePasskey').onclick = async () => {
 document.getElementById('sendCode').onclick = async () => {
   const email = document.getElementById('email').value.trim();
   if (!email) return;
-  await fetch('/accounts/v1/register/start', {
+  const r = await fetch('/accounts/v1/register/start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, bootstrap_code: document.getElementById('bootstrap')?.value.trim() || '' }),
   });
+  if (r.status === 403) {
+    // The site's own registration policy said no, and says why.
+    const body = await r.json().catch(() => ({}));
+    msg(body.error_description || 'Registration is currently closed.');
+    return;
+  }
   // Deliberately the same message whether or not the address has an account.
   msg('If that address can receive mail, a code is on its way.');
   show('codeStep');

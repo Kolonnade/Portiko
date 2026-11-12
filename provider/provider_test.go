@@ -1655,3 +1655,116 @@ func checkScripts(t *testing.T, page string) {
 		}
 	}
 }
+
+// harnessWithPolicy restarts the provider with a RegistrationPolicy and
+// records the addresses it was asked about.
+func (h *harness) withPolicy(policy provider.RegistrationPolicy) {
+	h.t.Helper()
+	cfg, err := provider.LoadConfig()
+	if err != nil {
+		h.t.Fatalf("policy: config: %v", err)
+	}
+	p, err := provider.New(context.Background(), cfg, provider.Options{Mailer: h.mail, RegistrationPolicy: policy})
+	if err != nil {
+		h.t.Fatalf("policy: provider: %v", err)
+	}
+	h.t.Cleanup(p.Close)
+	h.handler.Store(p.Handler())
+	h.p, h.db, h.cfg = p, p.DB(), cfg
+}
+
+// declined asserts a policy refusal: 403 with the message, and nothing stored,
+// mailed or verifiable.
+func (h *harness) declined(email, wantMessage string) {
+	h.t.Helper()
+	before := h.sentCodes()
+	resp := h.post("/accounts/v1/register/start", map[string]string{"email": email})
+	got := bodyString(h.t, resp)
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(got, "registration_refused") || !strings.Contains(got, wantMessage) {
+		h.t.Fatalf("policy refusal: %d %q, want 403 registration_refused with %q", resp.StatusCode, got, wantMessage)
+	}
+	if h.pendingRows(email) != 0 || h.sentCodes() != before {
+		h.t.Fatalf("%s: a refused registration stored or mailed something", email)
+	}
+	if _, err := h.db.ByIdentifier(context.Background(), "email", email); err == nil {
+		h.t.Fatalf("%s: an account exists after a refusal", email)
+	}
+}
+
+func TestRegistrationPolicyAllowsAndSeesNormalizedEmail(t *testing.T) {
+	h := newHarness(t)
+	var mu sync.Mutex
+	var asked []string
+	h.withPolicy(func(_ context.Context, email string) (bool, string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, email)
+		return true, "", nil
+	})
+	h.register("  Allowed@Example.com ")
+	if _, err := h.db.ByIdentifier(context.Background(), "email", "allowed@example.com"); err != nil {
+		t.Fatalf("the allowed account was not created: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(asked) == 0 || asked[0] != "allowed@example.com" {
+		t.Fatalf("policy asked about %q, want the normalized address", asked)
+	}
+}
+
+func TestRegistrationPolicyDenialShowsMessageAndOverridesOpenMode(t *testing.T) {
+	h := newHarness(t) // static mode is open: the policy must replace it
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "Invite only today.", nil })
+	h.declined("new@example.com", "Invite only today.")
+
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "", nil })
+	h.declined("new@example.com", "Registration is currently closed.")
+
+	// The page script shows the message.
+	if body := bodyString(t, h.get("/signin")); !strings.Contains(body, "error_description") {
+		t.Error("the sign-in page does not render a refusal message")
+	}
+}
+
+func TestRegistrationPolicyErrorFailsClosed(t *testing.T) {
+	h := newHarness(t)
+	h.withPolicy(func(context.Context, string) (bool, string, error) {
+		return true, "", errors.New("database exploded: secret detail")
+	})
+	resp := h.post("/accounts/v1/register/start", map[string]string{"email": "new@example.com"})
+	got := bodyString(t, resp)
+	if resp.StatusCode != http.StatusForbidden || strings.Contains(got, "secret detail") || strings.Contains(got, "exploded") {
+		t.Fatalf("error must fail closed with a generic message: %d %q", resp.StatusCode, got)
+	}
+	if h.pendingRows("new@example.com") != 0 || h.sentCodes() != 0 {
+		t.Fatal("an erroring policy let a registration through")
+	}
+}
+
+func TestRecoverySucceedsWhilePolicyDenies(t *testing.T) {
+	h := newHarness(t)
+	h.register("member@example.com")
+	calls := 0
+	h.withPolicy(func(context.Context, string) (bool, string, error) {
+		calls++
+		return false, "Closed.", nil
+	})
+	before := h.sentCodes()
+	resp := h.post("/accounts/v1/register/start", map[string]string{"email": "member@example.com"})
+	if resp.StatusCode != http.StatusAccepted || h.pendingRows("member@example.com") != 1 || h.sentCodes() != before+1 {
+		t.Fatalf("recovery was gated by the policy: %d", resp.StatusCode)
+	}
+	if calls != 0 {
+		t.Fatalf("recovery called the policy %d times", calls)
+	}
+	if r := h.login("member@example.com"); r.StatusCode != http.StatusOK {
+		t.Fatalf("existing passkey no longer signs in: %d", r.StatusCode)
+	}
+}
+
+func TestNoPolicyLeavesStaticModeUnchanged(t *testing.T) {
+	t.Setenv("REGISTRATION", "closed")
+	h := newHarness(t)
+	h.withPolicy(nil)
+	h.refused("stranger@example.com", "") // still the silent 202
+}

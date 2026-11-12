@@ -20,7 +20,9 @@ import (
 // registration code — so the response cannot be used to discover who has an
 // account, and a genuine user who forgot they registered still gets in.
 //
-// A NEW account must be allowed by the registration mode (see mayRegister).
+// A NEW account must be allowed by the registration policy when the embedder
+// set one, otherwise by the registration mode (see mayRegister). A policy
+// refusal is returned as *RefusedError so the page can show its message.
 // When it is not, nothing is stored and nothing is sent, but the caller sees the same
 // silence as every other case. An address that already has an account never
 // needs it: that path is recovery, and recovery is never gated on whether
@@ -46,9 +48,26 @@ func (s *Service) StartRegistration(ctx context.Context, email, bootstrapCode st
 		// enroll another passkey onto the existing user rather than refusing.
 		purpose = "recovery"
 	}
-	if purpose == "registration" && !s.mayRegister(bootstrapCode) {
-		logStep(ctx, "register: refusing a new account (closed, or without the bootstrap code)", nil)
-		return nil // Same silence: no row, no mail, no hint.
+	if purpose == "registration" {
+		if s.policy != nil {
+			// The embedding site decides, instead of REGISTRATION. Only here,
+			// for an address with no account: recovery never reaches the hook.
+			allowed, message, err := s.policy(ctx, email)
+			switch {
+			case err != nil:
+				logStep(ctx, "register: registration policy failed; refusing the new account", err)
+				return &RefusedError{Message: FailedPolicy}
+			case !allowed:
+				logStep(ctx, "register: registration policy refused a new account", nil)
+				if message == "" {
+					message = DefaultRefusal
+				}
+				return &RefusedError{Message: message}
+			}
+		} else if !s.mayRegister(bootstrapCode) {
+			logStep(ctx, "register: refusing a new account (closed, or without the bootstrap code)", nil)
+			return nil // Same silence: no row, no mail, no hint.
+		}
 	}
 
 	ttl := CodeTTL

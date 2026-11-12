@@ -49,14 +49,26 @@ func generic(w http.ResponseWriter) {
 //
 // Always 202, always the same body. Whether the address is new, already
 // registered, malformed, or refused for want of the bootstrap code is not
-// disclosed.
+// disclosed. The one exception is an embedder's RegistrationPolicy: when it
+// turns a new address away the answer is 403 registration_refused with the
+// policy's message in error_description (docs/registration.md).
 func (h *Auth) StartRegistration(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email         string `json:"email"`
 		BootstrapCode string `json:"bootstrap_code"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err == nil {
-		if err := h.svc.StartRegistration(r.Context(), body.Email, body.BootstrapCode); err != nil {
+		err := h.svc.StartRegistration(r.Context(), body.Email, body.BootstrapCode)
+		var refused *accounts.RefusedError
+		if errors.As(err, &refused) {
+			// Only an embedder's RegistrationPolicy gets here. Unlike the
+			// static modes it says no out loud, so the page can explain.
+			writeError(w, http.StatusForbidden, &kitprotocol.Error{
+				Code: "registration_refused", Description: refused.Message,
+			})
+			return
+		}
+		if err != nil {
 			slog.ErrorContext(r.Context(), "register start", "err", err)
 		}
 	}

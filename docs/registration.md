@@ -40,6 +40,41 @@ refuses every new account.
   limited per address and per IP ([Rate limits](rate-limits.md)), and is
   compared in constant time. Refusals are logged.
 
+## Deciding at runtime: `RegistrationPolicy`
+
+A site that embeds the provider and decides who may join from its own data (an
+admin toggle, an allow list) sets `provider.Options.RegistrationPolicy`:
+
+```go
+RegistrationPolicy: func(ctx context.Context, email string) (allowed bool, message string, err error)
+```
+
+- **When it runs.** At the start of registration (`register/start`), with the
+  normalized email, before any code is mailed or row stored. It runs once per
+  request, so a change in the site's data takes effect on the next request.
+- **Only for new accounts.** An address that already has an account is
+  recovery, and recovery never calls the hook, whatever it would answer.
+- **It replaces the static setting.** When a policy is set it alone decides:
+  `REGISTRATION` and `BOOTSTRAP_CODE` are not consulted for new accounts (the
+  startup checks on them still run). A policy that wants the invitation code
+  must check it itself. With no policy, everything above is unchanged.
+- **Deny.** Return `false` and a message. The request answers
+  `403 {"error":"registration_refused","error_description":"<message>"}`, and
+  the sign-in page shows the message. An empty message becomes
+  "Registration is currently closed.". Nothing is stored or mailed.
+- **Error.** Fails closed: the same 403 with a generic "unavailable" message;
+  the error is logged and never shown.
+
+**This is the one place Portiko says no out loud.** The static modes answer
+`202 code_sent` for everyone, so a caller cannot tell a new address from a
+registered one. A policy refusal is a 403 that only a new address can receive,
+so while the policy denies, `register/start` reveals which addresses have no
+account. That is the price of telling the person why; it is bounded by the
+per-address and per-IP rate limits. A site that cannot accept it should keep the
+static modes, or answer allow and refuse later in its own sign-in handling.
+A site that already publishes "registration is closed" loses nothing more than
+the existence of one address per rate-limited request.
+
 ## Enrolling the first account
 
 1. Deploy with `REGISTRATION=code` and a long `BOOTSTRAP_CODE`.

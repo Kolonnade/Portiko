@@ -48,7 +48,24 @@ type Service struct {
 	db     *store.DB
 	wa     *webauthn.WebAuthn
 	mailer mailer.Mailer
+	policy RegistrationPolicy
 }
+
+// RegistrationPolicy decides, for the embedding site, whether an address that
+// has no account may create one. See provider.Options.RegistrationPolicy.
+type RegistrationPolicy func(ctx context.Context, email string) (allowed bool, message string, err error)
+
+// DefaultRefusal is shown when a policy denies without saying why.
+const DefaultRefusal = "Registration is currently closed."
+
+// FailedPolicy is shown when the policy could not answer.
+const FailedPolicy = "Registration is unavailable right now. Try again later."
+
+// RefusedError reports that the registration policy turned a new account away.
+// Only a policy produces it; the static REGISTRATION mode stays silent.
+type RefusedError struct{ Message string }
+
+func (e *RefusedError) Error() string { return "registration refused: " + e.Message }
 
 // Caller describes the request a ceremony arrived on.
 //
@@ -62,8 +79,10 @@ type Caller struct {
 }
 
 // New builds the service.
-func New(cfg *config.Config, db *store.DB, wa *webauthn.WebAuthn, m mailer.Mailer) *Service {
-	return &Service{cfg: cfg, db: db, wa: wa, mailer: m}
+//
+// A nil policy leaves new accounts to the static REGISTRATION mode.
+func New(cfg *config.Config, db *store.DB, wa *webauthn.WebAuthn, m mailer.Mailer, policy RegistrationPolicy) *Service {
+	return &Service{cfg: cfg, db: db, wa: wa, mailer: m, policy: policy}
 }
 
 // logStep records which step actually failed.
