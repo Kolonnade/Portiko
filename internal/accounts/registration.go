@@ -3,6 +3,8 @@ package accounts
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -43,26 +45,26 @@ func (s *Service) StartRegistration(ctx context.Context, email, bootstrapCode st
 	}
 
 	purpose := "registration"
-	if _, err := s.db.ByIdentifier(ctx, "email", email); err == nil {
+	_, err = s.db.ByIdentifier(ctx, "email", email)
+	switch {
+	case err == nil:
 		// The address already has an account, so this is really a recovery:
 		// enroll another passkey onto the existing user rather than refusing.
 		purpose = "recovery"
+	case errors.Is(err, store.ErrNotFound):
+		// A new address: the registration path.
+	default:
+		// Not "no account": a transient failure must never send an existing
+		// member to the registration policy.
+		logStep(ctx, "register: looking up the account", err)
+		return err
 	}
 	if purpose == "registration" {
 		if s.policy != nil {
 			// The embedding site decides, instead of REGISTRATION. Only here,
 			// for an address with no account: recovery never reaches the hook.
-			allowed, message, err := s.policy(ctx, email)
-			switch {
-			case err != nil:
-				logStep(ctx, "register: registration policy failed; refusing the new account", err)
-				return &RefusedError{Message: FailedPolicy}
-			case !allowed:
-				logStep(ctx, "register: registration policy refused a new account", nil)
-				if message == "" {
-					message = DefaultRefusal
-				}
-				return &RefusedError{Message: message}
+			if err := s.checkPolicy(ctx, email); err != nil {
+				return err
 			}
 		} else if !s.mayRegister(bootstrapCode) {
 			logStep(ctx, "register: refusing a new account (closed, or without the bootstrap code)", nil)
@@ -91,6 +93,24 @@ func (s *Service) StartRegistration(ctx context.Context, email, bootstrapCode st
 	return nil
 }
 
+// checkPolicy asks the registration policy about a new address. It returns a
+// *RefusedError to deny, or to fail closed when the policy errors.
+func (s *Service) checkPolicy(ctx context.Context, email string) error {
+	allowed, message, err := s.policy(ctx, email)
+	if err != nil {
+		logStep(ctx, "register: registration policy failed; refusing the new account", err)
+		return &RefusedError{Message: FailedPolicy}
+	}
+	if !allowed {
+		slog.InfoContext(ctx, "registration refused by policy")
+		if message == "" {
+			message = DefaultRefusal
+		}
+		return &RefusedError{Message: message}
+	}
+	return nil
+}
+
 // VerifiedRegistration is the result of exchanging a code for a ceremony.
 type VerifiedRegistration struct {
 	Token   string
@@ -105,6 +125,17 @@ func (s *Service) VerifyCode(ctx context.Context, email, code string) (*Verified
 	if err != nil {
 		logStep(ctx, "register: verifying code", err)
 		return nil, ErrAuthFailed
+	}
+
+	// Registration may have been closed since the code was sent. Ask again, and
+	// answer like a bad code so nothing new is revealed.
+	if pending.Purpose == "registration" && s.policy != nil {
+		if err := s.checkPolicy(ctx, pending.Email); err != nil {
+			if derr := s.db.DeletePending(ctx, pending.Token); derr != nil {
+				logStep(ctx, "register: deleting a refused pending registration", derr)
+			}
+			return nil, ErrAuthFailed
+		}
 	}
 
 	var user *passkey.User

@@ -52,12 +52,16 @@ RegistrationPolicy: func(ctx context.Context, email string) (allowed bool, messa
 - **When it runs.** At the start of registration (`register/start`), with the
   normalized email, before any code is mailed or row stored. It runs once per
   request, so a change in the site's data takes effect on the next request.
+  It is asked again when the emailed code is verified, so closing registration
+  also stops sign-ups already in flight; a refusal there looks like a wrong
+  code and removes the pending code.
 - **Only for new accounts.** An address that already has an account is
   recovery, and recovery never calls the hook, whatever it would answer.
 - **It replaces the static setting.** When a policy is set it alone decides:
   `REGISTRATION` and `BOOTSTRAP_CODE` are not consulted for new accounts (the
-  startup checks on them still run). A policy that wants the invitation code
-  must check it itself. With no policy, everything above is unchanged.
+  startup checks on them still run). The invitation code is ignored when a
+  policy is set: the policy never receives it and the sign-in page does not
+  show the field. With no policy, everything above is unchanged.
 - **Deny.** Return `false` and a message. The request answers
   `403 {"error":"registration_refused","error_description":"<message>"}`, and
   the sign-in page shows the message. An empty message becomes

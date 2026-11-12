@@ -23,13 +23,15 @@ import (
 
 // Auth serves the passkey ceremonies, the browser's accounts and signing out.
 type Auth struct {
-	cfg      *config.Config
-	db       *store.DB
-	svc      *accounts.Service
-	ring     *keys.Ring // signs the logout and event tokens sent to sites
-	op       *op.Provider
-	profiles profile.Source
-	pages    *Pages
+	// policySet: a RegistrationPolicy replaces the invitation code.
+	policySet bool
+	cfg       *config.Config
+	db        *store.DB
+	svc       *accounts.Service
+	ring      *keys.Ring // signs the logout and event tokens sent to sites
+	op        *op.Provider
+	profiles  profile.Source
+	pages     *Pages
 }
 
 // clientIP is the requesting address, with X-Forwarded-For believed only from a
@@ -64,7 +66,7 @@ func (h *Auth) StartRegistration(w http.ResponseWriter, r *http.Request) {
 			// Only an embedder's RegistrationPolicy gets here. Unlike the
 			// static modes it says no out loud, so the page can explain.
 			writeError(w, http.StatusForbidden, &kitprotocol.Error{
-				Code: "registration_refused", Description: refused.Message,
+				Code: ErrRegistrationRefused, Description: refused.Message,
 			})
 			return
 		}

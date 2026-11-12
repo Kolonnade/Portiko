@@ -49,9 +49,6 @@ type Options struct {
 	RegistrationPolicy RegistrationPolicy
 }
 
-// RegistrationPolicy is the shape of Options.RegistrationPolicy.
-type RegistrationPolicy = accounts.RegistrationPolicy
-
 // Provider is a running identity provider.
 type Provider struct {
 	cfg     *Config
@@ -98,7 +95,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		profiles = builtinProfiles{db: db}
 	}
 
-	auth := &Auth{cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m, opts.RegistrationPolicy), ring: ring, profiles: profiles}
+	auth := &Auth{policySet: opts.RegistrationPolicy != nil, cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m, opts.RegistrationPolicy), ring: ring, profiles: profiles}
 	st := &storage{db: db, ring: ring, cfg: cfg, profiles: profiles, ended: auth.notifyLogout}
 
 	opOpts := []op.Option{

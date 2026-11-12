@@ -189,7 +189,7 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 		"ReturnTo":      returnTo,
 		"AuthRequestID": id,
 		"Adding":        len(list) > 0,
-		"CodeRequired":  p.cfg.RegistrationMode() == config.RegistrationCode,
+		"CodeRequired":  p.cfg.RegistrationMode() == config.RegistrationCode && !p.auth.policySet,
 	})
 }
 

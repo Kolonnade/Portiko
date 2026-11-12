@@ -1656,8 +1656,8 @@ func checkScripts(t *testing.T, page string) {
 	}
 }
 
-// harnessWithPolicy restarts the provider with a RegistrationPolicy and
-// records the addresses it was asked about.
+// withPolicy restarts the provider against the same database with the given
+// RegistrationPolicy (nil for none).
 func (h *harness) withPolicy(policy provider.RegistrationPolicy) {
 	h.t.Helper()
 	cfg, err := provider.LoadConfig()
@@ -1720,9 +1720,67 @@ func TestRegistrationPolicyDenialShowsMessageAndOverridesOpenMode(t *testing.T) 
 	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "", nil })
 	h.declined("new@example.com", "Registration is currently closed.")
 
-	// The page script shows the message.
-	if body := bodyString(t, h.get("/signin")); !strings.Contains(body, "error_description") {
+}
+
+// The page script cannot run here, so this only checks that the shipped
+// sign-in page reads the refusal message and shows it with msg().
+func TestSignInPageScriptShowsPolicyRefusal(t *testing.T) {
+	h := newHarness(t)
+	body := bodyString(t, h.get("/signin"))
+	if !strings.Contains(body, "r.status === 403") || !strings.Contains(body, "msg(body.error_description") {
 		t.Error("the sign-in page does not render a refusal message")
+	}
+}
+
+func TestPolicyReplacesInvitationCodeField(t *testing.T) {
+	t.Setenv("BOOTSTRAP_CODE", "correct-horse-battery-staple")
+	h := newHarness(t)
+	if !strings.Contains(bodyString(t, h.get("/signin")), `id="bootstrap"`) {
+		t.Fatal("code mode without a policy must show the invitation-code field")
+	}
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return true, "", nil })
+	if strings.Contains(bodyString(t, h.get("/signin")), `id="bootstrap"`) {
+		t.Fatal("a policy replaces the code, so the field must not be shown")
+	}
+}
+
+func TestAllowingPolicyOverridesClosedMode(t *testing.T) {
+	t.Setenv("REGISTRATION", "closed")
+	h := newHarness(t)
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return true, "", nil })
+	h.register("invited@example.com")
+	if _, err := h.db.ByIdentifier(context.Background(), "email", "invited@example.com"); err != nil {
+		t.Fatalf("account not created: %v", err)
+	}
+}
+
+func TestPolicyIsAskedAgainWhenTheCodeIsVerified(t *testing.T) {
+	h := newHarness(t)
+	var deny atomic.Bool
+	h.withPolicy(func(context.Context, string) (bool, string, error) {
+		if deny.Load() {
+			return false, "Closed.", nil
+		}
+		return true, "", nil
+	})
+	const email = "inflight@example.com"
+	if r := h.post("/accounts/v1/register/start", map[string]string{"email": email}); r.StatusCode != http.StatusAccepted {
+		t.Fatalf("start: %d", r.StatusCode)
+	}
+	code := h.latestCode(email)
+	deny.Store(true)
+	r := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": code})
+	if r.StatusCode == http.StatusOK {
+		t.Fatal("verify succeeded after registration was closed")
+	}
+	if body := bodyString(t, r); strings.Contains(body, "Closed.") {
+		t.Fatalf("verify leaked the policy message: %s", body)
+	}
+	if h.pendingRows(email) != 0 {
+		t.Fatal("the pending row survived a refusal")
+	}
+	if _, err := h.db.ByIdentifier(context.Background(), "email", email); err == nil {
+		t.Fatal("an account exists after a refusal")
 	}
 }
 
@@ -1744,18 +1802,20 @@ func TestRegistrationPolicyErrorFailsClosed(t *testing.T) {
 func TestRecoverySucceedsWhilePolicyDenies(t *testing.T) {
 	h := newHarness(t)
 	h.register("member@example.com")
-	calls := 0
+	var calls atomic.Int32
 	h.withPolicy(func(context.Context, string) (bool, string, error) {
-		calls++
+		calls.Add(1)
 		return false, "Closed.", nil
 	})
-	before := h.sentCodes()
-	resp := h.post("/accounts/v1/register/start", map[string]string{"email": "member@example.com"})
-	if resp.StatusCode != http.StatusAccepted || h.pendingRows("member@example.com") != 1 || h.sentCodes() != before+1 {
-		t.Fatalf("recovery was gated by the policy: %d", resp.StatusCode)
+	for _, variant := range []string{"member@example.com", "  MEMBER@Example.com "} {
+		before, rows := h.sentCodes(), h.pendingRows("member@example.com")
+		resp := h.post("/accounts/v1/register/start", map[string]string{"email": variant})
+		if resp.StatusCode != http.StatusAccepted || h.pendingRows("member@example.com") != rows+1 || h.sentCodes() != before+1 {
+			t.Fatalf("recovery (%q) was gated by the policy: %d", variant, resp.StatusCode)
+		}
 	}
-	if calls != 0 {
-		t.Fatalf("recovery called the policy %d times", calls)
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("recovery called the policy %d times", n)
 	}
 	if r := h.login("member@example.com"); r.StatusCode != http.StatusOK {
 		t.Fatalf("existing passkey no longer signs in: %d", r.StatusCode)
