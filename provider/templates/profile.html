@@ -44,7 +44,7 @@
 
   <button type="submit">Save</button>
   <p class="msg" id="msg" role="status"></p>
-  <p class="muted"><a href="/u/{{.Account}}/">Back</a></p>
+  <p class="muted"><a href="{{.Base}}/u/{{.Account}}/">Back</a></p>
 </form>
 
 {{template "passkey-signal"}}
@@ -59,7 +59,7 @@ form.onsubmit = async e => {
   const avatar = form.querySelector('input[name=avatar]:checked');
   if (!avatar) { msg('Choose an avatar.'); return; }
   msg('Saving…');
-  const r = await fetch('/accounts/v1/profile', {
+  const r = await fetch('{{.Base}}/accounts/v1/profile', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ account: ACCOUNT, display_name: document.getElementById('name').value, avatar: avatar.value }),
   });
@@ -67,15 +67,15 @@ form.onsubmit = async e => {
   if (!r.ok) { msg(out.error_description || 'Could not save your profile.'); return; }
   // Records the new version too, so the home page this navigates to stays quiet.
   await signalPasskeyDetailsOnce(SIGNAL && { ...SIGNAL, name: out.display_name }, out.profile_version);
-  window.location = '/u/' + ACCOUNT + '/';
+  window.location = '{{.Base}}/u/' + ACCOUNT + '/';
 };
 </script>
 
-{{template "auth-watch"}}
+{{template "auth-watch" .}}
 <script>
 watchAuth({
   account: ACCOUNT,
-  signedOut: () => location.replace('/'),
+  signedOut: () => location.replace('{{.Base}}/'),
   signedIn: (s) => { if (s.sid !== {{.SID}}) location.reload(); },
 });
 </script>

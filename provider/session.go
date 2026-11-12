@@ -15,23 +15,33 @@ import (
 // accounts signed in on that browser are rows keyed by the value's hash.
 const SSOCookieName = "accounts_sso"
 
-// SetSSOCookie writes the browser cookie.
+// cookiePath is the Path a cookie gets for a provider served under base: the
+// prefix itself, so the host site never receives it, or "/" at the root.
+func cookiePath(base string) string {
+	if base == "" {
+		return "/"
+	}
+	return base
+}
+
+// SetSSOCookie writes the browser cookie, limited to path (the provider's base
+// path, "" at the root of a host).
 //
 // SameSite=Lax is what makes single sign-on work: the cookie must be readable
 // when the browser arrives on a top-level redirect from a different site. Strict
 // would suppress it on exactly that navigation. Lax still withholds it from
 // cross-site POSTs, which is the case that matters for CSRF.
-func SetSSOCookie(w http.ResponseWriter, token string, expires time.Time, secure bool) {
+func SetSSOCookie(w http.ResponseWriter, path, token string, expires time.Time, secure bool) {
 	http.SetCookie(w, &http.Cookie{
-		Name: SSOCookieName, Value: token, Path: "/", Expires: expires,
+		Name: SSOCookieName, Value: token, Path: cookiePath(path), Expires: expires,
 		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 	})
 }
 
-// ClearSSOCookie expires the browser cookie.
-func ClearSSOCookie(w http.ResponseWriter, secure bool) {
+// ClearSSOCookie expires the browser cookie set for the same path.
+func ClearSSOCookie(w http.ResponseWriter, path string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
-		Name: SSOCookieName, Value: "", Path: "/", MaxAge: -1,
+		Name: SSOCookieName, Value: "", Path: cookiePath(path), MaxAge: -1,
 		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 	})
 }

@@ -61,7 +61,7 @@ func (l *Login) Start(w http.ResponseWriter, r *http.Request) {
 			l.fail(w, r, ar, oidc.ErrInteractionRequired().WithDescription("account_selection_required: several accounts are signed in"))
 		}
 	case prompt(oidc.PromptLogin):
-		http.Redirect(w, r, "/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
+		http.Redirect(w, r, l.auth.cfg.BasePath()+"/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
 	case prompt(oidc.PromptSelectAccount) || len(candidates) > 1:
 		l.auth.pages.chooser(w, r, chooserData{
 			AuthRequestID: id, ClientName: c.DisplayName, Accounts: viewsOf(candidates, -1),
@@ -69,7 +69,7 @@ func (l *Login) Start(w http.ResponseWriter, r *http.Request) {
 	case len(candidates) == 1:
 		l.complete(w, r, ar, &candidates[0])
 	default:
-		http.Redirect(w, r, "/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
+		http.Redirect(w, r, l.auth.cfg.BasePath()+"/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
 	}
 }
 
@@ -89,14 +89,14 @@ func (l *Login) Select(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := strconv.Atoi(r.PostFormValue("account"))
 	if err != nil {
-		http.Redirect(w, r, "/login?authRequestID="+url.QueryEscape(id), http.StatusSeeOther)
+		http.Redirect(w, r, l.auth.cfg.BasePath()+"/login?authRequestID="+url.QueryEscape(id), http.StatusSeeOther)
 		return
 	}
 	chosen := findAccount(l.candidates(r, ar, l.auth.accounts(r)), n)
 	if chosen == nil {
 		// Signed out in another tab, or not an account this request allows:
 		// ask again rather than guess.
-		http.Redirect(w, r, "/login?authRequestID="+url.QueryEscape(id), http.StatusSeeOther)
+		http.Redirect(w, r, l.auth.cfg.BasePath()+"/login?authRequestID="+url.QueryEscape(id), http.StatusSeeOther)
 		return
 	}
 	l.complete(w, r, ar, chosen)

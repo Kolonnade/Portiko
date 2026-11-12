@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -25,7 +26,8 @@ type Config struct {
 	// Issuer is this deployment's public base URL, e.g.
 	// https://accounts.terriblename.com. It is what appears in `iss` and what
 	// every discovery URL is built from, so it must be exact — no trailing
-	// slash, correct scheme.
+	// slash, correct scheme. A path (https://go.example.com/id) serves the whole
+	// provider under that path; see BasePath.
 	Issuer string
 
 	DatabaseURL string
@@ -106,6 +108,17 @@ const (
 	RegistrationCode   = "code"
 	RegistrationClosed = "closed"
 )
+
+// BasePath is the path the provider is served under, taken from the issuer:
+// "/id" for https://go.example.com/id, and "" when the issuer has no path. It
+// never ends in a slash, so a route is BasePath() + "/signin".
+func (c *Config) BasePath() string {
+	u, err := url.Parse(c.Issuer)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(u.EscapedPath(), "/")
+}
 
 // RegistrationMode is Registration with the empty default resolved. An
 // unknown value resolves to closed: a typo must never open sign-up.

@@ -27,24 +27,24 @@
   <div class="avatar" aria-hidden="true">{{.Emoji}}</div>
   {{if .Name}}
   <h1>{{.Name}}</h1>
-  <p class="muted"><a href="/u/{{.Account}}/profile">Edit profile</a>{{if .IsDefault}} · default account{{end}}</p>
+  <p class="muted"><a href="{{.Base}}/u/{{.Account}}/profile">Edit profile</a>{{if .IsDefault}} · default account{{end}}</p>
   {{else}}
   <h1>Welcome</h1>
-  <p><a href="/u/{{.Account}}/profile">Set up your profile</a> — choose a name and an avatar.</p>
+  <p><a href="{{.Base}}/u/{{.Account}}/profile">Set up your profile</a> — choose a name and an avatar.</p>
   {{end}}
 </div>
 
 <h2>Your accounts</h2>
 <ul class="list">
   {{range .Accounts}}
-  <li><a href="/u/{{.Ordinal}}/"{{if .Current}} aria-current="page"{{end}}>
+  <li><a href="{{$.Base}}/u/{{.Ordinal}}/"{{if .Current}} aria-current="page"{{end}}>
     <span aria-hidden="true">{{.Emoji}}</span>
     <span>{{if .Name}}{{.Name}}{{else}}Account {{.Ordinal}}{{end}}</span>
     {{if .Default}}<span class="muted">default</span>{{end}}
   </a></li>
   {{end}}
 </ul>
-{{if .CanAdd}}<p><a href="/signin?add=1">Add another account</a></p>{{end}}
+{{if .CanAdd}}<p><a href="{{.Base}}/signin?add=1">Add another account</a></p>{{end}}
 
 {{if .Sites}}
 <h2>Your sites</h2>
@@ -57,23 +57,23 @@
 
 <div class="row">
   {{if not .IsDefault}}
-  <form method="post" action="/accounts/v1/default"><input type="hidden" name="account" value="{{.Account}}"><button>Make default</button></form>
+  <form method="post" action="{{.Base}}/accounts/v1/default"><input type="hidden" name="account" value="{{.Account}}"><button>Make default</button></form>
   {{end}}
-  <form method="post" action="/accounts/v1/logout"><input type="hidden" name="account" value="{{.Account}}"><button>Sign out of this account</button></form>
+  <form method="post" action="{{.Base}}/accounts/v1/logout"><input type="hidden" name="account" value="{{.Account}}"><button>Sign out of this account</button></form>
   {{if gt (len .Accounts) 1}}
-  <form method="post" action="/accounts/v1/logout"><button>Sign out of all accounts</button></form>
+  <form method="post" action="{{.Base}}/accounts/v1/logout"><button>Sign out of all accounts</button></form>
   {{end}}
 </div>
 
 {{template "passkey-signal"}}
 <script>signalPasskeyDetailsOnce({{.Signal}}, {{.ProfileVersion}});</script>
 
-{{template "auth-watch"}}
+{{template "auth-watch" .}}
 <script>
 // Rendered for this account's session and profile; anything different means reload.
 watchAuth({
   account: {{.Account}},
-  signedOut: () => location.replace('/'),
+  signedOut: () => location.replace('{{.Base}}/'),
   signedIn: (s) => {
     if (s.sid !== {{.SID}} || s.display_name !== {{.Name}} || s.avatar !== {{.AvatarKey}} ||
         s.accounts.length !== {{len .Accounts}}) location.reload();

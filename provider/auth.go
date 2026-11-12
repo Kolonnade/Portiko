@@ -143,9 +143,9 @@ func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *st
 		writeError(w, http.StatusInternalServerError, &kitprotocol.Error{Code: kitprotocol.ErrServerError})
 		return
 	}
-	SetSSOCookie(w, token, time.Now().Add(store.SessionTTL), !h.cfg.DevInsecure)
+	SetSSOCookie(w, h.cfg.BasePath(), token, time.Now().Add(store.SessionTTL), !h.cfg.DevInsecure)
 
-	next := "/u/" + strconv.Itoa(sess.Ordinal) + "/"
+	next := h.cfg.BasePath() + "/u/" + strconv.Itoa(sess.Ordinal) + "/"
 	if id := r.URL.Query().Get("authRequestID"); id != "" {
 		next = h.continueAuthRequest(r, id, user, sess)
 	}
@@ -161,10 +161,10 @@ func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *st
 // just authenticated, or sends the person back through the handoff when this
 // account is not the one the request asked for.
 func (h *Auth) continueAuthRequest(r *http.Request, id string, user *store.User, sess *store.Session) string {
-	retry := "/login?authRequestID=" + url.QueryEscape(id)
+	retry := h.cfg.BasePath() + "/login?authRequestID=" + url.QueryEscape(id)
 	ar, err := h.db.AuthRequestByID(r.Context(), id)
 	if err != nil {
-		return "/u/" + strconv.Itoa(sess.Ordinal) + "/"
+		return h.cfg.BasePath() + "/u/" + strconv.Itoa(sess.Ordinal) + "/"
 	}
 	if ar.HintSubject != "" && ar.HintSubject != user.Subject {
 		return retry
@@ -207,12 +207,12 @@ func (h *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	remaining := h.accounts(r)
 	if len(remaining) == 0 {
-		ClearSSOCookie(w, !h.cfg.DevInsecure)
+		ClearSSOCookie(w, h.cfg.BasePath(), !h.cfg.DevInsecure)
 	}
 	if isFormPost(r) {
-		to := "/signin"
+		to := h.cfg.BasePath() + "/signin"
 		if len(remaining) > 0 {
-			to = "/"
+			to = h.cfg.BasePath() + "/"
 		}
 		http.Redirect(w, r, to, http.StatusSeeOther)
 		return
@@ -236,7 +236,7 @@ func (h *Auth) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	h.notifyLogout(r.Context(), a.User.Subject, "", clientIDs)
 	remaining := h.accounts(r)
 	if len(remaining) == 0 {
-		ClearSSOCookie(w, !h.cfg.DevInsecure)
+		ClearSSOCookie(w, h.cfg.BasePath(), !h.cfg.DevInsecure)
 	}
 	writeJSON(w, map[string]any{"status": "signed_out_everywhere", "remaining": len(remaining)})
 }
@@ -249,7 +249,7 @@ func (h *Auth) SetDefault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isFormPost(r) {
-		http.Redirect(w, r, "/u/"+strconv.Itoa(n)+"/", http.StatusSeeOther)
+		http.Redirect(w, r, h.cfg.BasePath()+"/u/"+strconv.Itoa(n)+"/", http.StatusSeeOther)
 		return
 	}
 	writeJSON(w, map[string]any{"status": "ok", "default": n})

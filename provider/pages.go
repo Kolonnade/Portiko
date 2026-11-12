@@ -47,6 +47,8 @@ func NewPages(cfg *config.Config, auth *Auth) (*Pages, error) {
 // render writes a page that must never be cached: every one of them is either
 // per-account or part of a sign-in.
 func (p *Pages) render(w http.ResponseWriter, status int, name string, data map[string]any) {
+	// Every page builds its links from .Base, so the provider works under a path.
+	data["Base"] = p.cfg.BasePath()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
@@ -79,20 +81,20 @@ func viewsOf(list []account, current int) []accountView {
 func (p *Pages) Root(w http.ResponseWriter, r *http.Request) {
 	a := defaultAccount(p.auth.accounts(r))
 	if a == nil {
-		http.Redirect(w, r, "/signin", http.StatusFound)
+		http.Redirect(w, r, p.cfg.BasePath()+"/signin", http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "/u/"+strconv.Itoa(a.Ordinal)+"/", http.StatusFound)
+	http.Redirect(w, r, p.cfg.BasePath()+"/u/"+strconv.Itoa(a.Ordinal)+"/", http.StatusFound)
 }
 
 // ProfileRedirect: GET /profile — sites link here without knowing numbers.
 func (p *Pages) ProfileRedirect(w http.ResponseWriter, r *http.Request) {
 	a := defaultAccount(p.auth.accounts(r))
 	if a == nil {
-		http.Redirect(w, r, "/signin?return_to=/profile", http.StatusFound)
+		http.Redirect(w, r, p.cfg.BasePath()+"/signin?return_to="+url.QueryEscape(p.cfg.BasePath()+"/profile"), http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "/u/"+strconv.Itoa(a.Ordinal)+"/profile", http.StatusFound)
+	http.Redirect(w, r, p.cfg.BasePath()+"/u/"+strconv.Itoa(a.Ordinal)+"/profile", http.StatusFound)
 }
 
 // site is one first-party site linked from the home page.
@@ -179,7 +181,7 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 	if len(list) > 0 && id == "" && !adding {
 		to := returnTo
 		if to == "" {
-			to = "/"
+			to = p.cfg.BasePath() + "/"
 		}
 		http.Redirect(w, r, to, http.StatusFound)
 		return

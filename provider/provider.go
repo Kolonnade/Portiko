@@ -149,23 +149,53 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 			"issuer", cfg.Issuer)
 	}
 
-	return &Provider{
-		cfg:     cfg,
-		db:      db,
-		limiter: rl,
-		handler: Router(Deps{
-			OpenID:    oidcProvider.HttpHandler(),
-			Discovery: &Discovery{cfg: cfg},
-			Auth:      auth,
-			Login:     &Login{auth: auth},
-			Pages:     pages,
-			Health:    health,
-			Limiter:   rl,
-		}),
-	}, nil
+	router := Router(Deps{
+		OpenID:    oidcProvider.HttpHandler(),
+		Discovery: &Discovery{cfg: cfg},
+		Auth:      auth,
+		Login:     &Login{auth: auth},
+		Pages:     pages,
+		Health:    health,
+		Limiter:   rl,
+	})
+	return &Provider{cfg: cfg, db: db, limiter: rl, handler: mountedAt(cfg.BasePath(), router)}, nil
+}
+
+// mountedAt serves router under base. At the root (base "") it is router itself.
+// Otherwise it answers only requests under base, strips it before routing, and
+// sends the bare base to base+"/".
+func mountedAt(base string, router http.Handler) http.Handler {
+	if base == "" {
+		return router
+	}
+	strip := http.StripPrefix(base, router)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == base {
+			to := base + "/"
+			if r.URL.RawQuery != "" {
+				to += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, to, http.StatusMovedPermanently)
+			return
+		}
+		strip.ServeHTTP(w, r)
+	})
 }
 
 // Handler is the provider's complete HTTP surface.
+//
+// Where it must be mounted follows from the issuer. With no path in the issuer
+// (https://accounts.example.com) mount it at the root: it owns every path of
+// its host. With a path (https://go.example.com/id) the provider lives under
+// that path and Handler already expects it: mount it, unmodified, at the
+// issuer's path with a trailing slash, and do not wrap it in http.StripPrefix.
+//
+//	mux.Handle("/id/", p.Handler()) // ISSUER=https://go.example.com/id
+//
+// Requests outside the prefix get 404, so the host's own routes stay the
+// host's. Cfg.BasePath() reports the prefix. Every URL the provider emits
+// (discovery, endpoints, redirects, links, form actions and the pages' script
+// fetches) carries it, and its cookie is limited to it.
 func (p *Provider) Handler() http.Handler { return p.handler }
 
 // DB exposes the store, for operator commands and tests.

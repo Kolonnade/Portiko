@@ -33,6 +33,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
 - [Conformance runs](docs/conformance.md) — the release gate: which OpenID plans, where they run, and the harness that signs the suite in with a virtual passkey
 - [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
+- [Serving under a path](docs/path-prefix.md) — an `ISSUER` with a path (`https://host/id`), how to mount `Handler()`, and the cookie that results
 
 ## Packages
 

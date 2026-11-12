@@ -21,7 +21,7 @@
 <ul class="list">
   {{range .Accounts}}
   <li>
-    <form method="post" action="/login/select">
+    <form method="post" action="{{$.Base}}/login/select">
       <input type="hidden" name="authRequestID" value="{{$.AuthRequestID}}">
       <input type="hidden" name="account" value="{{.Ordinal}}">
       <button class="acct">
@@ -33,7 +33,7 @@
   </li>
   {{end}}
 </ul>
-<p><a href="/signin?authRequestID={{.AuthRequestID}}">Use another account</a></p>
+<p><a href="{{.Base}}/signin?authRequestID={{.AuthRequestID}}">Use another account</a></p>
 
 {{else if eq .Mode "stale"}}
 <h1>That account isn't signed in here</h1>
@@ -41,14 +41,14 @@
 {{if .Accounts}}
 <ul class="list">
   {{range .Accounts}}
-  <li><a class="acct" href="/u/{{.Ordinal}}/">
+  <li><a class="acct" href="{{$.Base}}/u/{{.Ordinal}}/">
     <span class="emoji" aria-hidden="true">{{.Emoji}}</span>
     <span>{{if .Name}}{{.Name}}{{else}}Account {{.Ordinal}}{{end}}</span>
   </a></li>
   {{end}}
 </ul>
 {{end}}
-<p><a href="/signin?add=1">Sign in to another account</a></p>
+<p><a href="{{.Base}}/signin?add=1">Sign in to another account</a></p>
 
 {{else}}
 <h1>{{.Title}}</h1>
