@@ -377,6 +377,8 @@ func TestPrefixedHandlerMountedAtTheRoot(t *testing.T) {
 	}{
 		{"/idx", 404, ""}, {"/idx/foo", 404, ""}, {"/idhealth", 404, ""}, {"/health", 404, ""},
 		{"/signin", 404, ""}, {"/id%2Fsignin", 404, ""},
+		// Cleaning must never climb out of the prefix.
+		{"/id/..", 404, ""}, {"/id/../x", 404, ""}, {"/id/..%2Fx", 404, ""}, {"/id/%2E%2E/x", 404, ""},
 		{"/id/health", 200, ""}, {"/id/signin", 200, ""},
 		{"/id//signin", 308, "/id/signin"}, {"/id/./signin", 308, "/id/signin"},
 		{"/id/x/../signin", 308, "/id/signin"},

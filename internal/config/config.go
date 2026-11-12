@@ -126,6 +126,14 @@ func (c *Config) BasePath() string {
 	return base
 }
 
+// CheckIssuerPath reports whether the issuer's path is one the provider can be
+// served under. Load applies it; provider.New repeats it for a Config built by
+// hand, so a bad path fails instead of mounting at the root.
+func (c *Config) CheckIssuerPath() error {
+	_, err := basePathOf(strings.TrimSuffix(c.Issuer, "/"))
+	return err
+}
+
 var pathSegment = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 
 // basePathOf extracts and validates the issuer's path.

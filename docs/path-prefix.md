@@ -66,7 +66,7 @@ to the site and stay at `Path=/`.
   `Path=/id` one and does not clear the old one; it is inert (the new routes
   never read it at `/`) and expires on its own. A fresh deployment is unaffected.
 - `ISSUER`'s path is validated at startup: segments of letters, digits and
-  `. _ ~ -` only, no empty segments, no trailing slash, no query or fragment.
+  `. _ ~ -` only, no empty segments (one trailing slash is accepted and trimmed), no query or fragment.
 - Paths are matched on the segment boundary: `/idx` and `/idhealth` are the
   host's, not the provider's. A non-clean path under the prefix (`/id//signin`)
   is redirected (308) to its clean form with the prefix, and `/id` to `/id/`.

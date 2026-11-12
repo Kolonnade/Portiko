@@ -55,6 +55,9 @@ type Provider struct {
 // the HTTP surface. The schema must be current: call Migrate first. Configuration mistakes fail here rather than at a person's
 // first sign-in.
 func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
+	if err := cfg.CheckIssuerPath(); err != nil {
+		return nil, fmt.Errorf("provider: %w", err)
+	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
@@ -186,6 +189,11 @@ func mountedAt(base string, router http.Handler) http.Handler {
 		}
 		if clean == base {
 			clean = base + "/"
+		}
+		// path.Clean resolves ".." above the base; never redirect out of the prefix.
+		if !strings.HasPrefix(clean, base+"/") {
+			http.NotFound(w, r)
+			return
 		}
 		if clean != r.URL.Path {
 			to := (&url.URL{Path: clean, RawQuery: r.URL.RawQuery}).String()
