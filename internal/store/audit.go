@@ -14,6 +14,10 @@ const (
 	// AuditAccountRecovered records a passkey enrolled onto an account that
 	// already existed, by way of reading its email — the recovery path.
 	AuditAccountRecovered = "account.recovered"
+	// AuditCredentialRenamed records a passkey renamed by its holder.
+	AuditCredentialRenamed = "credential.renamed"
+	// AuditCredentialRevoked records a passkey removed by its holder.
+	AuditCredentialRevoked = "credential.revoked"
 	// AuditRefreshReuse records a rotated refresh token being presented again.
 	AuditRefreshReuse = "refresh.reuse_detected"
 )

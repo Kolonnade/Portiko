@@ -20,7 +20,7 @@ the issuer), the `jwks_uri` and every endpoint it lists, the Portiko
 configuration documents (`/id/.well-known/portiko-configuration` and the legacy
 path), the `/id/accounts/v1/*` API, every redirect, and every link, form action
 and `fetch` in the built-in pages. Templates get the prefix as `{{.Base}}`
-(`{{$.Base}}` inside a `range`); write `{{.Base}}/signin`, not `/signin`. A
+(`{{$.Base}}` inside a `range`); write `{{.Base}}/signin`, not `/signin`. The passkeys page (`{{.Base}}/u/{n}/passkeys`) follows the same rule. A
 `TEMPLATE_DIR` override that hard-codes root paths keeps working only at the
 root.
 

@@ -1,0 +1,83 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Passkeys — {{.ServiceName}}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  ul { list-style: none; padding: 0; }
+  li { border: 1px solid currentColor; border-radius: .4rem; padding: .7rem; margin: .75rem 0; }
+  .title { font-weight: 600; }
+  .muted { opacity: .7; font-size: .9rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
+  input[type=text], button { font: inherit; padding: .4rem .6rem; border-radius: .4rem; border: 1px solid currentColor; }
+  input[type=text] { flex: 1; min-width: 8rem; background: none; color: inherit; }
+  button { cursor: pointer; background: none; color: inherit; }
+  .msg { min-height: 1.5rem; }
+</style>
+
+<h1>Your passkeys</h1>
+<p class="muted">These are the passkeys that can sign in to this account. Remove one you no longer use or have lost.</p>
+
+<ul id="list">
+  {{range .Passkeys}}
+  <li data-id="{{.ID}}">
+    <div class="title">{{if .Name}}{{.Name}}{{else}}Passkey{{end}}</div>
+    <div class="muted">{{.Provider}} · created <time datetime="{{.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.CreatedAt.Format "2 Jan 2006"}}</time> ·
+      {{if .LastUsedAt}}last used <time datetime="{{.LastUsedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.LastUsedAt.Format "2 Jan 2006"}}</time>{{else}}never used{{end}}</div>
+    <div class="actions">
+      <input type="text" maxlength="{{$.MaxNameLen}}" value="{{.Name}}" aria-label="Passkey name" data-rename-input>
+      <button type="button" data-rename>Rename</button>
+      <button type="button" data-revoke>Remove</button>
+    </div>
+  </li>
+  {{end}}
+</ul>
+<p class="msg" id="msg" role="status"></p>
+<p class="muted"><a href="{{.Base}}/u/{{.Account}}/">Back</a></p>
+
+{{template "passkey-signal"}}
+<script>
+const ACCOUNT = {{.Account}};
+const BASE = '{{.Base}}/accounts/v1/passkeys';
+const msg = t => document.getElementById('msg').textContent = t;
+
+async function call(id, action, body) {
+  const r = await fetch(BASE + '/' + id + '/' + action, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account: ACCOUNT, ...body }),
+  });
+  const out = await r.json().catch(() => ({}));
+  return { ok: r.ok, out };
+}
+
+document.getElementById('list').addEventListener('click', async e => {
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  const id = li.dataset.id;
+  if (e.target.matches('[data-rename]')) {
+    const name = li.querySelector('[data-rename-input]').value;
+    msg('Saving…');
+    const { ok, out } = await call(id, 'rename', { name });
+    if (!ok) { msg(out.error_description || 'Could not rename the passkey.'); return; }
+    location.reload();
+  } else if (e.target.matches('[data-revoke]')) {
+    if (!confirm('Remove this passkey? Devices that rely on it will no longer be able to sign in.')) return;
+    msg('Removing…');
+    const { ok, out } = await call(id, 'revoke', {});
+    if (!ok) { msg(out.error_description || 'Could not remove the passkey.'); return; }
+    await signalAcceptedPasskeys(out.signal);
+    location.reload();
+  }
+});
+</script>
+
+{{template "auth-watch" .}}
+<script>
+watchAuth({
+  account: ACCOUNT,
+  signedOut: () => location.replace('{{.Base}}/'),
+  signedIn: (s) => { if (s.sid !== {{.SID}}) location.reload(); },
+});
+</script>

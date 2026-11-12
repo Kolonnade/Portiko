@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -101,37 +102,131 @@ func (d *DB) RecordLogin(ctx context.Context, credentialID []byte, signCount uin
 	return err
 }
 
+// ManagedCredential is one passkey as the account holder sees it: display
+// metadata only, never the public key or the raw credential id.
+type ManagedCredential struct {
+	ID         int64
+	Name       string
+	AAGUID     []byte
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+}
+
+// ListManaged lists an account's passkeys, oldest first, with when each was
+// created and last used.
+func (d *DB) ListManaged(ctx context.Context, userID int64) ([]ManagedCredential, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT id, COALESCE(device_name, ''), COALESCE(aaguid::text, ''), created_at, last_used_at
+		   FROM passkey_credentials WHERE user_id = $1 ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ManagedCredential{}
+	for rows.Next() {
+		var c ManagedCredential
+		var aaguid string
+		if err := rows.Scan(&c.ID, &c.Name, &aaguid, &c.CreatedAt, &c.LastUsedAt); err != nil {
+			return nil, err
+		}
+		c.AAGUID = passkey.ParseAAGUID(aaguid)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// RenameCredential names one of the account's passkeys. A credential that is
+// not the account's own is ErrNotFound, exactly as one that does not exist, so
+// the answer never reveals that another account's id is valid. It returns the
+// previous name for the audit trail.
+func (d *DB) RenameCredential(ctx context.Context, userID, credentialID int64, name string) (previous string, err error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(device_name, '') FROM passkey_credentials WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+		credentialID, userID).Scan(&previous); err != nil {
+		return "", norm(err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE passkey_credentials SET device_name = $3 WHERE id = $1 AND user_id = $2`,
+		credentialID, userID, name); err != nil {
+		return "", err
+	}
+	return previous, tx.Commit(ctx)
+}
+
+// RevokedCredential is what a revoke removed, kept for the audit row and for
+// telling the passkey provider the credential is gone.
+type RevokedCredential struct {
+	ID         int64
+	Name       string
+	AAGUID     []byte
+	UserHandle []byte
+}
+
 // Revoke deletes a credential, refusing to remove the account's last one.
 //
 // With no password to fall back on, removing the final passkey is not an
-// inconvenience — it is a permanently unreachable account. The count and the
-// delete run in one transaction so a concurrent revoke cannot slip between them
-// and leave zero.
-func (d *DB) Revoke(ctx context.Context, userID, credentialID int64) error {
+// inconvenience — it is a permanently unreachable account. The account's
+// credential rows are locked (FOR UPDATE) before they are counted, and the
+// count and the delete run in one transaction, so two concurrent revokes
+// serialize and cannot both pass the check and leave zero.
+//
+// A credential that is not the account's own is ErrNotFound, checked before the
+// last-credential rule so the answer cannot reveal that another id exists.
+func (d *DB) Revoke(ctx context.Context, userID, credentialID int64) (*RevokedCredential, error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var n int
-	if err := tx.QueryRow(ctx,
-		`SELECT count(*) FROM passkey_credentials WHERE user_id = $1 FOR UPDATE`,
-		userID).Scan(&n); err != nil {
-		return norm(err)
+	// FOR UPDATE cannot be combined with an aggregate, so lock the rows and
+	// count them here.
+	rows, err := tx.Query(ctx,
+		`SELECT id, COALESCE(device_name, ''), COALESCE(aaguid::text, ''), user_handle
+		   FROM passkey_credentials WHERE user_id = $1 ORDER BY id FOR UPDATE`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		n      int
+		target *RevokedCredential
+	)
+	for rows.Next() {
+		var c RevokedCredential
+		var aaguid string
+		if err := rows.Scan(&c.ID, &c.Name, &aaguid, &c.UserHandle); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		n++
+		if c.ID == credentialID {
+			c.AAGUID = passkey.ParseAAGUID(aaguid)
+			target = &c
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, ErrNotFound
 	}
 	if n <= 1 {
-		return ErrLastCredential
+		return nil, ErrLastCredential
 	}
-	tag, err := tx.Exec(ctx,
-		`DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2`, credentialID, userID)
-	if err != nil {
-		return err
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2`, credentialID, userID); err != nil {
+		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
-	return tx.Commit(ctx)
+	return target, nil
 }
 
 func nullIfEmpty(s string) any {

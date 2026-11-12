@@ -80,6 +80,9 @@ func Router(d Deps) http.Handler {
 	api.HandleFunc("POST /accounts/v1/logout/all", d.Auth.LogoutAll)
 	api.HandleFunc("POST /accounts/v1/default", d.Auth.SetDefault)
 	api.HandleFunc("POST /accounts/v1/profile", d.Auth.UpdateProfile)
+	api.HandleFunc("GET /accounts/v1/passkeys", d.Auth.ListPasskeys)
+	api.HandleFunc("POST /accounts/v1/passkeys/{id}/rename", d.Auth.RenamePasskey)
+	api.HandleFunc("POST /accounts/v1/passkeys/{id}/revoke", d.Auth.RevokePasskey)
 	api.HandleFunc("GET /accounts/v1/session", d.Auth.Session)
 	mux.Handle("/accounts/", VersionMiddleware(api))
 
@@ -90,6 +93,8 @@ func Router(d Deps) http.Handler {
 	mux.HandleFunc("GET /profile", d.Pages.ProfileRedirect)
 	mux.HandleFunc("GET /u/{n}/{$}", d.Pages.Home)
 	mux.HandleFunc("GET /u/{n}/profile", d.Pages.Profile)
+	mux.HandleFunc("GET /passkeys", d.Pages.PasskeysRedirect)
+	mux.HandleFunc("GET /u/{n}/passkeys", d.Pages.Passkeys)
 	mux.HandleFunc("GET /{$}", d.Pages.Root)
 	return mux
 }

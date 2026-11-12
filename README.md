@@ -11,6 +11,7 @@ Go and PostgreSQL, built on [`zitadel/oidc`](https://github.com/zitadel/oidc) so
 ## What it does
 
 - **Passkeys, and nothing to remember.** Enrollment, sign-in and recovery, with the credential-flag and sign-count rules synced passkeys actually need.
+- **Passkey management.** People list, rename and revoke their own passkeys; the last one cannot be removed. See [docs/passkeys.md](docs/passkeys.md).
 - **One sign-in across your sites**, whether they share a domain or not. No third-party cookies.
 - **Several signed-in accounts at once**, numbered from 0 the way people expect, with each site signed in as whichever account the person picked for it.
 - **Sign-out that arrives**, through OpenID Connect Back-Channel Logout, and profile changes pushed to sites as Shared Signals events instead of waiting for the next token refresh.

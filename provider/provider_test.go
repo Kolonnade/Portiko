@@ -84,9 +84,15 @@ type harness struct {
 	rp         virtualwebauthn.RelyingParty
 	auth       virtualwebauthn.Authenticator
 	tokenCalls atomic.Int32
+	prefix     string // issuer path prefix, "" at the root
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { t.Helper(); return newHarnessAt(t, "") }
+
+// newHarnessAt serves the provider under an issuer path prefix such as "/id",
+// mounted on the host's mux the way an embedding site does. Every harness
+// request goes to the prefixed URL.
+func newHarnessAt(t *testing.T, prefix string) *harness {
 	t.Helper()
 	resetSchema(t)
 
@@ -94,7 +100,7 @@ func newHarness(t *testing.T) *harness {
 	origin := "http://" + srv.Listener.Addr().String()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
-	t.Setenv("ISSUER", origin)
+	t.Setenv("ISSUER", origin+prefix)
 	t.Setenv("DATABASE_URL", testDatabaseURL())
 	t.Setenv("WEBAUTHN_RP_ID", "localhost")
 	t.Setenv("WEBAUTHN_RP_ORIGINS", origin)
@@ -121,14 +127,21 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
-	h := &harness{t: t, srv: srv, p: p, db: p.DB(), cfg: cfg, mail: mail}
+	h := &harness{t: t, srv: srv, p: p, db: p.DB(), cfg: cfg, mail: mail, prefix: prefix}
 	h.handler.Store(p.Handler())
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/oauth/token" {
+	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == prefix+"/oauth/token" {
 			h.tokenCalls.Add(1)
 		}
 		h.handler.Load().(http.Handler).ServeHTTP(w, r)
 	})
+	if prefix == "" {
+		srv.Config.Handler = serve
+	} else {
+		mux := http.NewServeMux()
+		mux.Handle(prefix+"/", serve)
+		srv.Config.Handler = mux
+	}
 	srv.Start()
 	t.Cleanup(func() { srv.Close(); p.Close() })
 
@@ -209,7 +222,7 @@ type auditRow struct{ ip, userAgent, detail string }
 func (h *harness) post(path string, body any) *http.Response {
 	h.t.Helper()
 	blob, _ := json.Marshal(body)
-	resp, err := h.client.Post(h.srv.URL+path, "application/json", bytes.NewReader(blob))
+	resp, err := h.client.Post(h.srv.URL+h.prefix+path, "application/json", bytes.NewReader(blob))
 	if err != nil {
 		h.t.Fatalf("POST %s: %v", path, err)
 	}
@@ -218,7 +231,7 @@ func (h *harness) post(path string, body any) *http.Response {
 
 func (h *harness) get(path string) *http.Response {
 	h.t.Helper()
-	resp, err := h.client.Get(h.srv.URL + path)
+	resp, err := h.client.Get(h.srv.URL + h.prefix + path)
 	if err != nil {
 		h.t.Fatalf("GET %s: %v", path, err)
 	}
@@ -267,7 +280,7 @@ func (h *harness) register(email string) int {
 	}
 	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
 	attestation := virtualwebauthn.CreateAttestationResponse(h.rp, h.auth, credential, *options)
-	fin, err := h.client.Post(h.srv.URL+"/accounts/v1/register/finish", "application/json", strings.NewReader(attestation))
+	fin, err := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/register/finish", "application/json", strings.NewReader(attestation))
 	if err != nil {
 		h.t.Fatalf("register/finish: %v", err)
 	}
@@ -301,7 +314,7 @@ func (h *harness) login(email string) *http.Response {
 		credential = &h.auth.Credentials[0]
 	}
 	assertion := virtualwebauthn.CreateAssertionResponse(h.rp, h.auth, *credential, *options)
-	fin, err := h.client.Post(h.srv.URL+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
+	fin, err := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
 	if err != nil {
 		h.t.Fatalf("login/finish: %v", err)
 	}
@@ -612,12 +625,12 @@ func TestAssertionCannotBeReplayed(t *testing.T) {
 	options, _ := virtualwebauthn.ParseAssertionOptions(string(raw))
 	assertion := virtualwebauthn.CreateAssertionResponse(h.rp, h.auth, h.auth.Credentials[0], *options)
 
-	first, _ := h.client.Post(h.srv.URL+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
+	first, _ := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
 	first.Body.Close()
 	if first.StatusCode != http.StatusOK {
 		t.Fatalf("first assertion should succeed, got %d", first.StatusCode)
 	}
-	second, _ := h.client.Post(h.srv.URL+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
+	second, _ := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
 	second.Body.Close()
 	if second.StatusCode == http.StatusOK {
 		t.Fatal("the same assertion was accepted twice")
