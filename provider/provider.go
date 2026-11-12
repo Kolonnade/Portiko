@@ -44,7 +44,8 @@ type Options struct {
 	// an address that already has an account (recovery is not gated). Deny with
 	// a message to have it shown on the sign-in page; an empty message becomes
 	// "Registration is currently closed.". An error fails closed with a generic
-	// message. When set it replaces the REGISTRATION / BOOTSTRAP_CODE decision;
+	// message. It is asked again when the emailed code is verified, so closing
+	// registration also stops sign-ups already in flight. When set it replaces the REGISTRATION / BOOTSTRAP_CODE decision;
 	// nil leaves that setting in charge.
 	RegistrationPolicy RegistrationPolicy
 }

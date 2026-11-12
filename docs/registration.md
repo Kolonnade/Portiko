@@ -88,6 +88,7 @@ the existence of one address per rate-limited request.
 4. To let others join, give them the code. To stop, set `REGISTRATION=closed`
    and restart; existing accounts are unaffected.
 
-The sign-in page shows the invitation-code field only in `code` mode. A
+The sign-in page shows the invitation-code field only in `code` mode with no
+`RegistrationPolicy`. A
 deployment with its own `TEMPLATE_DIR` must add the field itself, as
 `bootstrap_code` in the `register/start` body, or nobody can create an account.

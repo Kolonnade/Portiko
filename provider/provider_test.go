@@ -1719,7 +1719,6 @@ func TestRegistrationPolicyDenialShowsMessageAndOverridesOpenMode(t *testing.T) 
 
 	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "", nil })
 	h.declined("new@example.com", "Registration is currently closed.")
-
 }
 
 // The page script cannot run here, so this only checks that the shipped
@@ -1755,32 +1754,59 @@ func TestAllowingPolicyOverridesClosedMode(t *testing.T) {
 }
 
 func TestPolicyIsAskedAgainWhenTheCodeIsVerified(t *testing.T) {
+	// A bad code is the reference answer a refusal must be identical to.
+	h0 := newHarness(t)
+	bad := h0.post("/accounts/v1/register/verify", map[string]string{"email": "nobody@example.com", "code": "000000"})
+	wantStatus, wantBody := bad.StatusCode, bodyString(t, bad)
+	if wantStatus != http.StatusUnauthorized || !strings.Contains(wantBody, "authentication_failed") {
+		t.Fatalf("reference bad-code response: %d %s", wantStatus, wantBody)
+	}
+
+	cases := map[string]func(context.Context, string) (bool, string, error){
+		"denies": func(context.Context, string) (bool, string, error) { return false, "Closed.", nil },
+		"errors": func(context.Context, string) (bool, string, error) { return true, "", errors.New("policy down") },
+	}
+	for name, later := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			var flipped atomic.Bool
+			h.withPolicy(func(ctx context.Context, e string) (bool, string, error) {
+				if flipped.Load() {
+					return later(ctx, e)
+				}
+				return true, "", nil
+			})
+			const email = "inflight@example.com"
+			if r := h.post("/accounts/v1/register/start", map[string]string{"email": email}); r.StatusCode != http.StatusAccepted {
+				t.Fatalf("start: %d", r.StatusCode)
+			}
+			code := h.latestCode(email)
+			flipped.Store(true)
+			r := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": code})
+			if body := bodyString(t, r); r.StatusCode != wantStatus || body != wantBody {
+				t.Fatalf("verify after a refusal: %d %s, want the bad-code answer %d %s", r.StatusCode, body, wantStatus, wantBody)
+			}
+			if h.pendingRows(email) != 0 {
+				t.Fatal("the pending row survived a refusal")
+			}
+			if _, err := h.db.ByIdentifier(context.Background(), "email", email); err == nil {
+				t.Fatal("an account exists after a refusal")
+			}
+		})
+	}
+}
+
+func TestRecoveryVerifySucceedsWhilePolicyDenies(t *testing.T) {
 	h := newHarness(t)
-	var deny atomic.Bool
-	h.withPolicy(func(context.Context, string) (bool, string, error) {
-		if deny.Load() {
-			return false, "Closed.", nil
-		}
-		return true, "", nil
-	})
-	const email = "inflight@example.com"
+	const email = "member2@example.com"
+	h.register(email)
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "Closed.", nil })
 	if r := h.post("/accounts/v1/register/start", map[string]string{"email": email}); r.StatusCode != http.StatusAccepted {
 		t.Fatalf("start: %d", r.StatusCode)
 	}
-	code := h.latestCode(email)
-	deny.Store(true)
-	r := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": code})
-	if r.StatusCode == http.StatusOK {
-		t.Fatal("verify succeeded after registration was closed")
-	}
-	if body := bodyString(t, r); strings.Contains(body, "Closed.") {
-		t.Fatalf("verify leaked the policy message: %s", body)
-	}
-	if h.pendingRows(email) != 0 {
-		t.Fatal("the pending row survived a refusal")
-	}
-	if _, err := h.db.ByIdentifier(context.Background(), "email", email); err == nil {
-		t.Fatal("an account exists after a refusal")
+	r := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": h.latestCode(email)})
+	if body := bodyString(t, r); r.StatusCode != http.StatusOK || !strings.Contains(body, `"purpose":"recovery"`) {
+		t.Fatalf("recovery verify was gated by the policy: %d %s", r.StatusCode, body)
 	}
 }
 
