@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
@@ -38,6 +41,16 @@ type Options struct {
 	// Mailer delivers one-time codes and new-passkey notices. Nil uses SMTP
 	// when configured, otherwise the log.
 	Mailer Mailer
+	// RegistrationPolicy decides at runtime whether an address with no account
+	// may create one. It is called at the start of registration with the
+	// normalized email, before any code is mailed or row stored, and never for
+	// an address that already has an account (recovery is not gated). Deny with
+	// a message to have it shown on the sign-in page; an empty message becomes
+	// "Registration is currently closed.". An error fails closed with a generic
+	// message. It is asked again when the emailed code is verified, so closing
+	// registration also stops sign-ups already in flight. When set it replaces the REGISTRATION / BOOTSTRAP_CODE decision;
+	// nil leaves that setting in charge.
+	RegistrationPolicy RegistrationPolicy
 }
 
 // Provider is a running identity provider.
@@ -52,6 +65,9 @@ type Provider struct {
 // the HTTP surface. The schema must be current: call Migrate first. Configuration mistakes fail here rather than at a person's
 // first sign-in.
 func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
+	if err := cfg.CheckIssuerPath(); err != nil {
+		return nil, fmt.Errorf("provider: %w", err)
+	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
@@ -86,7 +102,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		profiles = builtinProfiles{db: db}
 	}
 
-	auth := &Auth{cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m), ring: ring, profiles: profiles}
+	auth := &Auth{policySet: opts.RegistrationPolicy != nil, cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m, opts.RegistrationPolicy), ring: ring, profiles: profiles}
 	st := &storage{db: db, ring: ring, cfg: cfg, profiles: profiles, ended: auth.notifyLogout}
 
 	opOpts := []op.Option{
@@ -149,23 +165,69 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 			"issuer", cfg.Issuer)
 	}
 
-	return &Provider{
-		cfg:     cfg,
-		db:      db,
-		limiter: rl,
-		handler: Router(Deps{
-			OpenID:    oidcProvider.HttpHandler(),
-			Discovery: &Discovery{cfg: cfg},
-			Auth:      auth,
-			Login:     &Login{auth: auth},
-			Pages:     pages,
-			Health:    health,
-			Limiter:   rl,
-		}),
-	}, nil
+	router := Router(Deps{
+		OpenID:    oidcProvider.HttpHandler(),
+		Discovery: &Discovery{cfg: cfg},
+		Auth:      auth,
+		Login:     &Login{auth: auth},
+		Pages:     pages,
+		Health:    health,
+		Limiter:   rl,
+	})
+	return &Provider{cfg: cfg, db: db, limiter: rl, handler: mountedAt(cfg.BasePath(), router)}, nil
+}
+
+// mountedAt serves router under base. At the root (base "") it is router itself.
+// Otherwise it answers only paths that are base or begin with base+"/" (a plain
+// string prefix would also match /idx and /idhealth), 404s the rest, redirects a
+// path that is not clean (//, /./, /../) to its clean form keeping the prefix,
+// and sends the bare base to base+"/".
+func mountedAt(base string, router http.Handler) http.Handler {
+	if base == "" {
+		return router
+	}
+	strip := http.StripPrefix(base, router)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		escaped := r.URL.EscapedPath()
+		if escaped != base && !strings.HasPrefix(escaped, base+"/") {
+			http.NotFound(w, r)
+			return
+		}
+		clean := path.Clean(r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/") && clean != "/" {
+			clean += "/"
+		}
+		if clean == base {
+			clean = base + "/"
+		}
+		// path.Clean resolves ".." above the base; never redirect out of the prefix.
+		if !strings.HasPrefix(clean, base+"/") {
+			http.NotFound(w, r)
+			return
+		}
+		if clean != r.URL.Path {
+			to := (&url.URL{Path: clean, RawQuery: r.URL.RawQuery}).String()
+			http.Redirect(w, r, to, http.StatusPermanentRedirect)
+			return
+		}
+		strip.ServeHTTP(w, r)
+	})
 }
 
 // Handler is the provider's complete HTTP surface.
+//
+// Where it must be mounted follows from the issuer. With no path in the issuer
+// (https://accounts.example.com) mount it at the root: it owns every path of
+// its host. With a path (https://go.example.com/id) the provider lives under
+// that path and Handler already expects it: mount it, unmodified, at the
+// issuer's path with a trailing slash, and do not wrap it in http.StripPrefix.
+//
+//	mux.Handle("/id/", p.Handler()) // ISSUER=https://go.example.com/id
+//
+// Requests outside the prefix get 404, so the host's own routes stay the
+// host's. Cfg.BasePath() reports the prefix. Every URL the provider emits
+// (discovery, endpoints, redirects, links, form actions and the pages' script
+// fetches) carries it, and its cookie is limited to it.
 func (p *Provider) Handler() http.Handler { return p.handler }
 
 // DB exposes the store, for operator commands and tests.

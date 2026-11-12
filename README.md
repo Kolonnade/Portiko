@@ -11,6 +11,7 @@ Go and PostgreSQL, built on [`zitadel/oidc`](https://github.com/zitadel/oidc) so
 ## What it does
 
 - **Passkeys, and nothing to remember.** Enrollment, sign-in and recovery, with the credential-flag and sign-count rules synced passkeys actually need.
+- **Passkey management.** People list, rename and revoke their own passkeys; the last one cannot be removed. See [docs/passkeys.md](docs/passkeys.md).
 - **One sign-in across your sites**, whether they share a domain or not. No third-party cookies.
 - **Several signed-in accounts at once**, numbered from 0 the way people expect, with each site signed in as whichever account the person picked for it.
 - **Sign-out that arrives**, through OpenID Connect Back-Channel Logout, and profile changes pushed to sites as Shared Signals events instead of waiting for the next token refresh.
@@ -33,6 +34,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
 - [Conformance runs](docs/conformance.md) — the release gate: which OpenID plans, where they run, and the harness that signs the suite in with a virtual passkey
 - [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
+- [Serving under a path](docs/path-prefix.md) — an `ISSUER` with a path (`https://host/id`), how to mount `Handler()`, and the cookie that results
 
 ## Packages
 
@@ -42,7 +44,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - `verify` — check Portiko tokens on an API: access tokens, logout and event tokens, with a cached key set.
 - `verify/verifytest` — mint test tokens against an in-process key, no provider needed.
 
-To run the provider inside your own program: call `provider.Migrate` before `provider.New` (it is safe on every start), register your own sites with `(*Provider).RegisterClient`, and pass `Options.Mailer` to send mail some other way than SMTP. The `portiko` command does the same with `portiko migrate` and `portiko register-client`.
+To run the provider inside your own program: call `provider.Migrate` before `provider.New` (it is safe on every start), register your own sites with `(*Provider).RegisterClient`, and pass `Options.Mailer` to send mail some other way than SMTP, and `Options.RegistrationPolicy` to decide at runtime who may create an account (see `docs/registration.md`). The `portiko` command does the same with `portiko migrate` and `portiko register-client`.
 
 Import these; don't copy them. If you need something under `internal/`, open an issue asking for a public API.
 

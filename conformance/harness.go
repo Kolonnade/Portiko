@@ -142,6 +142,9 @@ func (h *Harness) SignIns() int {
 
 // ServeHTTP serves the provider, except that the sign-in page for an
 // authorization request is answered by a passkey ceremony instead of a page.
+//
+// The harness needs a root issuer (no path): it intercepts /signin and calls
+// /accounts/v1/* unprefixed.
 func (h *Harness) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && r.URL.Path == "/signin" && r.URL.Query().Get("authRequestID") != "" {
 		h.signIn(w, r)

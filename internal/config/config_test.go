@@ -43,3 +43,32 @@ func TestLoadRejectsInconsistentRegistration(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadValidatesTheIssuerPath(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("WEBAUTHN_RP_ID", "example.com")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://example.com")
+	t.Setenv("CRYPTO_KEY", strings.Repeat("ab", 32))
+	t.Setenv("REGISTRATION", "closed")
+	t.Setenv("BOOTSTRAP_CODE", "")
+	for issuer, base := range map[string]string{
+		"https://example.com": "", "https://example.com/": "", "https://example.com/id": "/id",
+		"https://example.com/id/": "/id", "https://example.com/a/b-c_d.e~f": "/a/b-c_d.e~f",
+	} {
+		t.Setenv("ISSUER", issuer)
+		c, err := Load()
+		if err != nil || c.BasePath() != base {
+			t.Errorf("ISSUER=%q: base %q err %v, want %q", issuer, c.BasePath(), err, base)
+		}
+	}
+	for _, issuer := range []string{
+		"https://example.com/id//", "https://example.com//id", "https://example.com/a//b", "https://example.com/id?x=1",
+		"https://example.com/id#f", "https://example.com/i%20d", "https://example.com/id%2Fx", "https://example.com/a/../b",
+		"https://example.com/./id", "https://example.com/café",
+	} {
+		t.Setenv("ISSUER", issuer)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ISSUER") {
+			t.Errorf("ISSUER=%q should be refused, got %v", issuer, err)
+		}
+	}
+}

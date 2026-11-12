@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Kolonnade/Portiko/internal/accounts"
 	"github.com/Kolonnade/Portiko/internal/mailer"
 	"github.com/Kolonnade/Portiko/internal/store"
 	"github.com/Kolonnade/Portiko/migrations"
@@ -19,6 +20,9 @@ import (
 // required, because a deployment that adds passkeys silently gives the holder
 // no way to notice a compromised mailbox.
 type Mailer = mailer.Mailer
+
+// RegistrationPolicy is the shape of Options.RegistrationPolicy.
+type RegistrationPolicy = accounts.RegistrationPolicy
 
 // PasskeyNotice describes a passkey just added to an account that already
 // existed. Authenticator is empty when the passkey's provider is unknown, which

@@ -8,6 +8,7 @@ Design notes written ahead of the code, so the implementation has something to b
 | [multiple-accounts.md](multiple-accounts.md) | Several accounts signed in at once: the session model, choosing an account at the provider, and how server-rendered sites, single-page applications and native apps each say which account they mean |
 | [recovery.md](recovery.md) | What happens when someone loses their passkey, their email, or both: the ladder from a second passkey down to the operator, and the rules every path follows |
 | [key-rotation.md](key-rotation.md) | How the signing key is stored, the one-off that encrypts an existing one, and the three-step rotation — including the emergency version and what forcing it costs |
+| [passkeys.md](passkeys.md) | Listing, renaming and revoking an account's passkeys: the page, the `/accounts/v1/passkeys` endpoints, the last-passkey rule, audit rows, and which WebAuthn signals are sent |
 | [rate-limits.md](rate-limits.md) | What is limited and by how much, why the per-address counters live in Postgres, and why `TRUSTED_PROXIES` has to be set behind a reverse proxy |
 
 More will land as the code does: the protocol specification, a self-hosting guide, the threat model, and a guide to signing in across sites on different domains.

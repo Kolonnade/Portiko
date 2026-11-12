@@ -11,7 +11,7 @@ function watchAuth(opts) {
     if (document.visibilityState !== 'visible' || checking || Date.now() - last < 2000) return;
     checking = true; last = Date.now();
     try {
-      const r = await fetch('/accounts/v1/session' + query, {
+      const r = await fetch('{{.Base}}/accounts/v1/session' + query, {
         cache: 'no-store', headers: { 'Accounts-Protocol-Version': '1.0' },
       });
       if (r.status === 401) { if (opts.signedOut) opts.signedOut(); return; }

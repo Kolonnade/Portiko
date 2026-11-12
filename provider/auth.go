@@ -23,13 +23,15 @@ import (
 
 // Auth serves the passkey ceremonies, the browser's accounts and signing out.
 type Auth struct {
-	cfg      *config.Config
-	db       *store.DB
-	svc      *accounts.Service
-	ring     *keys.Ring // signs the logout and event tokens sent to sites
-	op       *op.Provider
-	profiles profile.Source
-	pages    *Pages
+	// policySet: a RegistrationPolicy replaces the invitation code.
+	policySet bool
+	cfg       *config.Config
+	db        *store.DB
+	svc       *accounts.Service
+	ring      *keys.Ring // signs the logout and event tokens sent to sites
+	op        *op.Provider
+	profiles  profile.Source
+	pages     *Pages
 }
 
 // clientIP is the requesting address, with X-Forwarded-For believed only from a
@@ -49,14 +51,26 @@ func generic(w http.ResponseWriter) {
 //
 // Always 202, always the same body. Whether the address is new, already
 // registered, malformed, or refused for want of the bootstrap code is not
-// disclosed.
+// disclosed. The one exception is an embedder's RegistrationPolicy: when it
+// turns a new address away the answer is 403 registration_refused with the
+// policy's message in error_description (docs/registration.md).
 func (h *Auth) StartRegistration(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email         string `json:"email"`
 		BootstrapCode string `json:"bootstrap_code"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err == nil {
-		if err := h.svc.StartRegistration(r.Context(), body.Email, body.BootstrapCode); err != nil {
+		err := h.svc.StartRegistration(r.Context(), body.Email, body.BootstrapCode)
+		var refused *accounts.RefusedError
+		if errors.As(err, &refused) {
+			// Only an embedder's RegistrationPolicy gets here. Unlike the
+			// static modes it says no out loud, so the page can explain.
+			writeError(w, http.StatusForbidden, &kitprotocol.Error{
+				Code: ErrRegistrationRefused, Description: refused.Message,
+			})
+			return
+		}
+		if err != nil {
 			slog.ErrorContext(r.Context(), "register start", "err", err)
 		}
 	}
@@ -143,9 +157,9 @@ func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *st
 		writeError(w, http.StatusInternalServerError, &kitprotocol.Error{Code: kitprotocol.ErrServerError})
 		return
 	}
-	SetSSOCookie(w, token, time.Now().Add(store.SessionTTL), !h.cfg.DevInsecure)
+	SetSSOCookie(w, h.cfg.BasePath(), token, time.Now().Add(store.SessionTTL), !h.cfg.DevInsecure)
 
-	next := "/u/" + strconv.Itoa(sess.Ordinal) + "/"
+	next := h.cfg.BasePath() + "/u/" + strconv.Itoa(sess.Ordinal) + "/"
 	if id := r.URL.Query().Get("authRequestID"); id != "" {
 		next = h.continueAuthRequest(r, id, user, sess)
 	}
@@ -161,10 +175,10 @@ func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *st
 // just authenticated, or sends the person back through the handoff when this
 // account is not the one the request asked for.
 func (h *Auth) continueAuthRequest(r *http.Request, id string, user *store.User, sess *store.Session) string {
-	retry := "/login?authRequestID=" + url.QueryEscape(id)
+	retry := h.cfg.BasePath() + "/login?authRequestID=" + url.QueryEscape(id)
 	ar, err := h.db.AuthRequestByID(r.Context(), id)
 	if err != nil {
-		return "/u/" + strconv.Itoa(sess.Ordinal) + "/"
+		return h.cfg.BasePath() + "/u/" + strconv.Itoa(sess.Ordinal) + "/"
 	}
 	if ar.HintSubject != "" && ar.HintSubject != user.Subject {
 		return retry
@@ -207,12 +221,12 @@ func (h *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	remaining := h.accounts(r)
 	if len(remaining) == 0 {
-		ClearSSOCookie(w, !h.cfg.DevInsecure)
+		ClearSSOCookie(w, h.cfg.BasePath(), !h.cfg.DevInsecure)
 	}
 	if isFormPost(r) {
-		to := "/signin"
+		to := h.cfg.BasePath() + "/signin"
 		if len(remaining) > 0 {
-			to = "/"
+			to = h.cfg.BasePath() + "/"
 		}
 		http.Redirect(w, r, to, http.StatusSeeOther)
 		return
@@ -236,7 +250,7 @@ func (h *Auth) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	h.notifyLogout(r.Context(), a.User.Subject, "", clientIDs)
 	remaining := h.accounts(r)
 	if len(remaining) == 0 {
-		ClearSSOCookie(w, !h.cfg.DevInsecure)
+		ClearSSOCookie(w, h.cfg.BasePath(), !h.cfg.DevInsecure)
 	}
 	writeJSON(w, map[string]any{"status": "signed_out_everywhere", "remaining": len(remaining)})
 }
@@ -249,7 +263,7 @@ func (h *Auth) SetDefault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isFormPost(r) {
-		http.Redirect(w, r, "/u/"+strconv.Itoa(n)+"/", http.StatusSeeOther)
+		http.Redirect(w, r, h.cfg.BasePath()+"/u/"+strconv.Itoa(n)+"/", http.StatusSeeOther)
 		return
 	}
 	writeJSON(w, map[string]any{"status": "ok", "default": n})

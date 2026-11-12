@@ -19,7 +19,7 @@
 <div id="passkey" class="step on">
   <button id="usePasskey">Use a passkey</button>
   <p class="muted">Or <a href="#" id="showEmail">sign in with your email</a>.</p>
-  {{if .Adding}}<p class="muted"><a href="/">Back to your accounts</a></p>{{end}}
+  {{if .Adding}}<p class="muted"><a href="{{.Base}}/">Back to your accounts</a></p>{{end}}
 </div>
 
 <div id="emailStep" class="step">
@@ -67,14 +67,14 @@ document.getElementById('showEmail').onclick = e => { e.preventDefault(); show('
 document.getElementById('usePasskey').onclick = async () => {
   msg('Waiting for your passkey…');
   try {
-    const r = await fetch('/accounts/v1/login/start');
+    const r = await fetch('{{.Base}}/accounts/v1/login/start');
     if (!r.ok) throw new Error('start failed');
     const options = (await r.json()).publicKey;
     options.challenge = b64uToBuf(options.challenge);
     (options.allowCredentials || []).forEach(c => c.id = b64uToBuf(c.id));
 
     const cred = await navigator.credentials.get({ publicKey: options, signal: freshSignal() });
-    await finish('/accounts/v1/login/finish', {
+    await finish('{{.Base}}/accounts/v1/login/finish', {
       id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
       response: {
         clientDataJSON: bufToB64u(cred.response.clientDataJSON),
@@ -92,10 +92,16 @@ document.getElementById('usePasskey').onclick = async () => {
 document.getElementById('sendCode').onclick = async () => {
   const email = document.getElementById('email').value.trim();
   if (!email) return;
-  await fetch('/accounts/v1/register/start', {
+  const r = await fetch('{{.Base}}/accounts/v1/register/start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, bootstrap_code: document.getElementById('bootstrap')?.value.trim() || '' }),
   });
+  if (r.status === 403) {
+    // The site's own registration policy said no, and says why.
+    const body = await r.json().catch(() => ({}));
+    msg(body.error_description || 'Registration is currently closed.');
+    return;
+  }
   // Deliberately the same message whether or not the address has an account.
   msg('If that address can receive mail, a code is on its way.');
   show('codeStep');
@@ -105,7 +111,7 @@ document.getElementById('verify').onclick = async () => {
   const email = document.getElementById('email').value.trim();
   const code = document.getElementById('code').value.trim();
   msg('Checking…');
-  const r = await fetch('/accounts/v1/register/verify', {
+  const r = await fetch('{{.Base}}/accounts/v1/register/verify', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, code }),
   });
@@ -119,7 +125,7 @@ document.getElementById('verify').onclick = async () => {
   msg('Create a passkey to finish.');
   try {
     const cred = await navigator.credentials.create({ publicKey: options, signal: freshSignal() });
-    await finish('/accounts/v1/register/finish', {
+    await finish('{{.Base}}/accounts/v1/register/finish', {
       id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
       response: {
         clientDataJSON: bufToB64u(cred.response.clientDataJSON),
@@ -143,17 +149,17 @@ async function finish(url, body) {
       : 'Sign-in failed.');
     return;
   }
-  window.location = AUTH_REQUEST ? out.redirect : (RETURN_TO || out.redirect || '/');
+  window.location = AUTH_REQUEST ? out.redirect : (RETURN_TO || out.redirect || '{{.Base}}/');
 }
 </script>
 
-{{template "auth-watch"}}
+{{template "auth-watch" .}}
 <script>
 // Signed in from another tab while this one waited: carry on to where this tab
 // was going. Not while adding an account — this browser is already signed in.
 if (!ADDING) {
   watchAuth({ signedIn: () => {
-    window.location = AUTH_REQUEST ? '/login?authRequestID=' + encodeURIComponent(AUTH_REQUEST) : (RETURN_TO || '/');
+    window.location = AUTH_REQUEST ? '{{.Base}}/login?authRequestID=' + encodeURIComponent(AUTH_REQUEST) : (RETURN_TO || '{{.Base}}/');
   } });
 }
 </script>

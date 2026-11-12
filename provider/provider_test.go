@@ -84,9 +84,15 @@ type harness struct {
 	rp         virtualwebauthn.RelyingParty
 	auth       virtualwebauthn.Authenticator
 	tokenCalls atomic.Int32
+	prefix     string // issuer path prefix, "" at the root
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { t.Helper(); return newHarnessAt(t, "") }
+
+// newHarnessAt serves the provider under an issuer path prefix such as "/id",
+// mounted on the host's mux the way an embedding site does. Every harness
+// request goes to the prefixed URL.
+func newHarnessAt(t *testing.T, prefix string) *harness {
 	t.Helper()
 	resetSchema(t)
 
@@ -94,7 +100,7 @@ func newHarness(t *testing.T) *harness {
 	origin := "http://" + srv.Listener.Addr().String()
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
-	t.Setenv("ISSUER", origin)
+	t.Setenv("ISSUER", origin+prefix)
 	t.Setenv("DATABASE_URL", testDatabaseURL())
 	t.Setenv("WEBAUTHN_RP_ID", "localhost")
 	t.Setenv("WEBAUTHN_RP_ORIGINS", origin)
@@ -121,14 +127,21 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("provider: %v", err)
 	}
-	h := &harness{t: t, srv: srv, p: p, db: p.DB(), cfg: cfg, mail: mail}
+	h := &harness{t: t, srv: srv, p: p, db: p.DB(), cfg: cfg, mail: mail, prefix: prefix}
 	h.handler.Store(p.Handler())
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/oauth/token" {
+	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == prefix+"/oauth/token" {
 			h.tokenCalls.Add(1)
 		}
 		h.handler.Load().(http.Handler).ServeHTTP(w, r)
 	})
+	if prefix == "" {
+		srv.Config.Handler = serve
+	} else {
+		mux := http.NewServeMux()
+		mux.Handle(prefix+"/", serve)
+		srv.Config.Handler = mux
+	}
 	srv.Start()
 	t.Cleanup(func() { srv.Close(); p.Close() })
 
@@ -209,7 +222,7 @@ type auditRow struct{ ip, userAgent, detail string }
 func (h *harness) post(path string, body any) *http.Response {
 	h.t.Helper()
 	blob, _ := json.Marshal(body)
-	resp, err := h.client.Post(h.srv.URL+path, "application/json", bytes.NewReader(blob))
+	resp, err := h.client.Post(h.srv.URL+h.prefix+path, "application/json", bytes.NewReader(blob))
 	if err != nil {
 		h.t.Fatalf("POST %s: %v", path, err)
 	}
@@ -218,7 +231,7 @@ func (h *harness) post(path string, body any) *http.Response {
 
 func (h *harness) get(path string) *http.Response {
 	h.t.Helper()
-	resp, err := h.client.Get(h.srv.URL + path)
+	resp, err := h.client.Get(h.srv.URL + h.prefix + path)
 	if err != nil {
 		h.t.Fatalf("GET %s: %v", path, err)
 	}
@@ -267,7 +280,7 @@ func (h *harness) register(email string) int {
 	}
 	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
 	attestation := virtualwebauthn.CreateAttestationResponse(h.rp, h.auth, credential, *options)
-	fin, err := h.client.Post(h.srv.URL+"/accounts/v1/register/finish", "application/json", strings.NewReader(attestation))
+	fin, err := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/register/finish", "application/json", strings.NewReader(attestation))
 	if err != nil {
 		h.t.Fatalf("register/finish: %v", err)
 	}
@@ -301,7 +314,7 @@ func (h *harness) login(email string) *http.Response {
 		credential = &h.auth.Credentials[0]
 	}
 	assertion := virtualwebauthn.CreateAssertionResponse(h.rp, h.auth, *credential, *options)
-	fin, err := h.client.Post(h.srv.URL+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
+	fin, err := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
 	if err != nil {
 		h.t.Fatalf("login/finish: %v", err)
 	}
@@ -612,12 +625,12 @@ func TestAssertionCannotBeReplayed(t *testing.T) {
 	options, _ := virtualwebauthn.ParseAssertionOptions(string(raw))
 	assertion := virtualwebauthn.CreateAssertionResponse(h.rp, h.auth, h.auth.Credentials[0], *options)
 
-	first, _ := h.client.Post(h.srv.URL+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
+	first, _ := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
 	first.Body.Close()
 	if first.StatusCode != http.StatusOK {
 		t.Fatalf("first assertion should succeed, got %d", first.StatusCode)
 	}
-	second, _ := h.client.Post(h.srv.URL+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
+	second, _ := h.client.Post(h.srv.URL+h.prefix+"/accounts/v1/login/finish", "application/json", strings.NewReader(assertion))
 	second.Body.Close()
 	if second.StatusCode == http.StatusOK {
 		t.Fatal("the same assertion was accepted twice")
@@ -1654,4 +1667,203 @@ func checkScripts(t *testing.T, page string) {
 			t.Errorf("script %d does not parse: %v\n%s", i, err, out)
 		}
 	}
+}
+
+// withPolicy restarts the provider against the same database with the given
+// RegistrationPolicy (nil for none).
+func (h *harness) withPolicy(policy provider.RegistrationPolicy) {
+	h.t.Helper()
+	cfg, err := provider.LoadConfig()
+	if err != nil {
+		h.t.Fatalf("policy: config: %v", err)
+	}
+	p, err := provider.New(context.Background(), cfg, provider.Options{Mailer: h.mail, RegistrationPolicy: policy})
+	if err != nil {
+		h.t.Fatalf("policy: provider: %v", err)
+	}
+	h.t.Cleanup(p.Close)
+	h.handler.Store(p.Handler())
+	h.p, h.db, h.cfg = p, p.DB(), cfg
+}
+
+// declined asserts a policy refusal: 403 with the message, and nothing stored,
+// mailed or verifiable.
+func (h *harness) declined(email, wantMessage string) {
+	h.t.Helper()
+	before := h.sentCodes()
+	resp := h.post("/accounts/v1/register/start", map[string]string{"email": email})
+	got := bodyString(h.t, resp)
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(got, "registration_refused") || !strings.Contains(got, wantMessage) {
+		h.t.Fatalf("policy refusal: %d %q, want 403 registration_refused with %q", resp.StatusCode, got, wantMessage)
+	}
+	if h.pendingRows(email) != 0 || h.sentCodes() != before {
+		h.t.Fatalf("%s: a refused registration stored or mailed something", email)
+	}
+	if _, err := h.db.ByIdentifier(context.Background(), "email", email); err == nil {
+		h.t.Fatalf("%s: an account exists after a refusal", email)
+	}
+}
+
+func TestRegistrationPolicyAllowsAndSeesNormalizedEmail(t *testing.T) {
+	h := newHarness(t)
+	var mu sync.Mutex
+	var asked []string
+	h.withPolicy(func(_ context.Context, email string) (bool, string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, email)
+		return true, "", nil
+	})
+	h.register("  Allowed@Example.com ")
+	if _, err := h.db.ByIdentifier(context.Background(), "email", "allowed@example.com"); err != nil {
+		t.Fatalf("the allowed account was not created: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(asked) == 0 || asked[0] != "allowed@example.com" {
+		t.Fatalf("policy asked about %q, want the normalized address", asked)
+	}
+}
+
+func TestRegistrationPolicyDenialShowsMessageAndOverridesOpenMode(t *testing.T) {
+	h := newHarness(t) // static mode is open: the policy must replace it
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "Invite only today.", nil })
+	h.declined("new@example.com", "Invite only today.")
+
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "", nil })
+	h.declined("new@example.com", "Registration is currently closed.")
+}
+
+// The page script cannot run here, so this only checks that the shipped
+// sign-in page reads the refusal message and shows it with msg().
+func TestSignInPageScriptShowsPolicyRefusal(t *testing.T) {
+	h := newHarness(t)
+	body := bodyString(t, h.get("/signin"))
+	if !strings.Contains(body, "r.status === 403") || !strings.Contains(body, "msg(body.error_description") {
+		t.Error("the sign-in page does not render a refusal message")
+	}
+}
+
+func TestPolicyReplacesInvitationCodeField(t *testing.T) {
+	t.Setenv("BOOTSTRAP_CODE", "correct-horse-battery-staple")
+	h := newHarness(t)
+	if !strings.Contains(bodyString(t, h.get("/signin")), `id="bootstrap"`) {
+		t.Fatal("code mode without a policy must show the invitation-code field")
+	}
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return true, "", nil })
+	if strings.Contains(bodyString(t, h.get("/signin")), `id="bootstrap"`) {
+		t.Fatal("a policy replaces the code, so the field must not be shown")
+	}
+}
+
+func TestAllowingPolicyOverridesClosedMode(t *testing.T) {
+	t.Setenv("REGISTRATION", "closed")
+	h := newHarness(t)
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return true, "", nil })
+	h.register("invited@example.com")
+	if _, err := h.db.ByIdentifier(context.Background(), "email", "invited@example.com"); err != nil {
+		t.Fatalf("account not created: %v", err)
+	}
+}
+
+func TestPolicyIsAskedAgainWhenTheCodeIsVerified(t *testing.T) {
+	// A bad code is the reference answer a refusal must be identical to.
+	h0 := newHarness(t)
+	bad := h0.post("/accounts/v1/register/verify", map[string]string{"email": "nobody@example.com", "code": "000000"})
+	wantStatus, wantBody := bad.StatusCode, bodyString(t, bad)
+	if wantStatus != http.StatusUnauthorized || !strings.Contains(wantBody, "authentication_failed") {
+		t.Fatalf("reference bad-code response: %d %s", wantStatus, wantBody)
+	}
+
+	cases := map[string]func(context.Context, string) (bool, string, error){
+		"denies": func(context.Context, string) (bool, string, error) { return false, "Closed.", nil },
+		"errors": func(context.Context, string) (bool, string, error) { return true, "", errors.New("policy down") },
+	}
+	for name, later := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			var flipped atomic.Bool
+			h.withPolicy(func(ctx context.Context, e string) (bool, string, error) {
+				if flipped.Load() {
+					return later(ctx, e)
+				}
+				return true, "", nil
+			})
+			const email = "inflight@example.com"
+			if r := h.post("/accounts/v1/register/start", map[string]string{"email": email}); r.StatusCode != http.StatusAccepted {
+				t.Fatalf("start: %d", r.StatusCode)
+			}
+			code := h.latestCode(email)
+			flipped.Store(true)
+			r := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": code})
+			if body := bodyString(t, r); r.StatusCode != wantStatus || body != wantBody {
+				t.Fatalf("verify after a refusal: %d %s, want the bad-code answer %d %s", r.StatusCode, body, wantStatus, wantBody)
+			}
+			if h.pendingRows(email) != 0 {
+				t.Fatal("the pending row survived a refusal")
+			}
+			if _, err := h.db.ByIdentifier(context.Background(), "email", email); err == nil {
+				t.Fatal("an account exists after a refusal")
+			}
+		})
+	}
+}
+
+func TestRecoveryVerifySucceedsWhilePolicyDenies(t *testing.T) {
+	h := newHarness(t)
+	const email = "member2@example.com"
+	h.register(email)
+	h.withPolicy(func(context.Context, string) (bool, string, error) { return false, "Closed.", nil })
+	if r := h.post("/accounts/v1/register/start", map[string]string{"email": email}); r.StatusCode != http.StatusAccepted {
+		t.Fatalf("start: %d", r.StatusCode)
+	}
+	r := h.post("/accounts/v1/register/verify", map[string]string{"email": email, "code": h.latestCode(email)})
+	if body := bodyString(t, r); r.StatusCode != http.StatusOK || !strings.Contains(body, `"purpose":"recovery"`) {
+		t.Fatalf("recovery verify was gated by the policy: %d %s", r.StatusCode, body)
+	}
+}
+
+func TestRegistrationPolicyErrorFailsClosed(t *testing.T) {
+	h := newHarness(t)
+	h.withPolicy(func(context.Context, string) (bool, string, error) {
+		return true, "", errors.New("database exploded: secret detail")
+	})
+	resp := h.post("/accounts/v1/register/start", map[string]string{"email": "new@example.com"})
+	got := bodyString(t, resp)
+	if resp.StatusCode != http.StatusForbidden || strings.Contains(got, "secret detail") || strings.Contains(got, "exploded") {
+		t.Fatalf("error must fail closed with a generic message: %d %q", resp.StatusCode, got)
+	}
+	if h.pendingRows("new@example.com") != 0 || h.sentCodes() != 0 {
+		t.Fatal("an erroring policy let a registration through")
+	}
+}
+
+func TestRecoverySucceedsWhilePolicyDenies(t *testing.T) {
+	h := newHarness(t)
+	h.register("member@example.com")
+	var calls atomic.Int32
+	h.withPolicy(func(context.Context, string) (bool, string, error) {
+		calls.Add(1)
+		return false, "Closed.", nil
+	})
+	for _, variant := range []string{"member@example.com", "  MEMBER@Example.com "} {
+		before, rows := h.sentCodes(), h.pendingRows("member@example.com")
+		resp := h.post("/accounts/v1/register/start", map[string]string{"email": variant})
+		if resp.StatusCode != http.StatusAccepted || h.pendingRows("member@example.com") != rows+1 || h.sentCodes() != before+1 {
+			t.Fatalf("recovery (%q) was gated by the policy: %d", variant, resp.StatusCode)
+		}
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("recovery called the policy %d times", n)
+	}
+	if r := h.login("member@example.com"); r.StatusCode != http.StatusOK {
+		t.Fatalf("existing passkey no longer signs in: %d", r.StatusCode)
+	}
+}
+
+func TestNoPolicyLeavesStaticModeUnchanged(t *testing.T) {
+	t.Setenv("REGISTRATION", "closed")
+	h := newHarness(t)
+	h.withPolicy(nil)
+	h.refused("stranger@example.com", "") // still the silent 202
 }
