@@ -245,6 +245,11 @@ func TestBrowserReportedEvent(t *testing.T) {
 		t.Fatalf("fail: %+v", log.all())
 	}
 
+	h.reportEvent("?authRequestID=someone%40example.com", h.srv.URL, map[string]string{"stage": "passkey_signin_finished", "error": "AbortError"})
+	if e := log.find(provider.StagePasskeySignInDone, provider.OutcomeAbandon); e == nil || e.FlowID != "" {
+		t.Fatalf("malformed authRequestID became a flow: %+v", log.all())
+	}
+
 	n := len(log.all())
 	if code := h.reportEvent("?flow=f2", h.srv.URL, map[string]string{"stage": "code_verified", "error": "X"}); code != http.StatusNoContent {
 		t.Errorf("bad stage: %d", code)

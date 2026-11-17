@@ -76,12 +76,16 @@ func newFlowID() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// flowOf reads the flow from the request's query: the authorization request ID,
-// else a well-formed flow parameter.
+// flowOf reads the flow from the request's query: a well-formed authorization
+// request ID, else a well-formed flow parameter. Anything else reports no flow,
+// so a caller cannot put arbitrary text into an event.
 func flowOf(r *http.Request) (flow, authRequestID string) {
 	q := r.URL.Query()
 	if id := q.Get("authRequestID"); id != "" {
-		return id, id
+		if flowPattern.MatchString(id) {
+			return id, id
+		}
+		return "", ""
 	}
 	if f := q.Get("flow"); flowPattern.MatchString(f) {
 		return f, ""
