@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -32,6 +33,7 @@ type Auth struct {
 	op        *op.Provider
 	profiles  profile.Source
 	pages     *Pages
+	onEvent   func(context.Context, SignInEvent)
 }
 
 // clientIP is the requesting address, with X-Forwarded-For believed only from a
@@ -59,9 +61,20 @@ func (h *Auth) StartRegistration(w http.ResponseWriter, r *http.Request) {
 		Email         string `json:"email"`
 		BootstrapCode string `json:"bootstrap_code"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err == nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		h.emit(r, StageEmailSubmitted, OutcomeFail, "bad_request")
+	} else {
+		h.emit(r, StageEmailSubmitted, OutcomeOK, "")
 		err := h.svc.StartRegistration(r.Context(), body.Email, body.BootstrapCode)
 		var refused *accounts.RefusedError
+		switch {
+		case err == nil:
+			h.emit(r, StageCodeSent, OutcomeOK, "")
+		case errors.As(err, &refused):
+			h.emit(r, StageCodeSent, OutcomeFail, ErrRegistrationRefused)
+		default:
+			h.emit(r, StageCodeSent, OutcomeFail, "send_error")
+		}
 		if errors.As(err, &refused) {
 			// Only an embedder's RegistrationPolicy gets here. Unlike the
 			// static modes it says no out loud, so the page can explain.
@@ -91,9 +104,12 @@ func (h *Auth) VerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.svc.VerifyCode(r.Context(), body.Email, body.Code)
 	if err != nil {
+		h.emit(r, StageCodeVerified, OutcomeFail, storeReason(err))
 		generic(w)
 		return
 	}
+	h.emit(r, StageCodeVerified, OutcomeOK, "")
+	h.emit(r, StagePasskeyCreateStarted, OutcomeOK, "")
 	writeJSON(w, map[string]any{"purpose": res.Purpose, "creation_options": res.Options})
 }
 
@@ -101,6 +117,7 @@ func (h *Auth) VerifyCode(w http.ResponseWriter, r *http.Request) {
 func (h *Auth) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 	response, err := protocol.ParseCredentialCreationResponseBody(http.MaxBytesReader(w, r.Body, 64<<10))
 	if err != nil {
+		h.emit(r, StagePasskeyCreateDone, OutcomeFail, "parse_error")
 		generic(w)
 		return
 	}
@@ -108,19 +125,22 @@ func (h *Auth) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		[]byte(response.Response.CollectedClientData.Challenge), response,
 		accounts.Caller{IP: h.clientIP(r), UserAgent: r.UserAgent()})
 	if err != nil {
+		h.emit(r, StagePasskeyCreateDone, OutcomeFail, "verify_failed")
 		generic(w)
 		return
 	}
-	h.establishSession(w, r, user, amr)
+	h.establishSession(w, r, user, amr, StagePasskeyCreateDone)
 }
 
 // StartLogin: GET /accounts/v1/login/start → assertion options.
 func (h *Auth) StartLogin(w http.ResponseWriter, r *http.Request) {
 	options, err := h.svc.StartLogin(r.Context(), r.URL.Query().Get("email"))
 	if err != nil {
+		h.emit(r, StagePasskeySignInStarted, OutcomeFail, "start_failed")
 		generic(w)
 		return
 	}
+	h.emit(r, StagePasskeySignInStarted, OutcomeOK, "")
 	writeJSON(w, options)
 }
 
@@ -128,24 +148,29 @@ func (h *Auth) StartLogin(w http.ResponseWriter, r *http.Request) {
 func (h *Auth) FinishLogin(w http.ResponseWriter, r *http.Request) {
 	response, err := protocol.ParseCredentialRequestResponseBody(http.MaxBytesReader(w, r.Body, 64<<10))
 	if err != nil {
+		h.emit(r, StagePasskeySignInDone, OutcomeFail, "parse_error")
 		generic(w)
 		return
 	}
 	user, amr, err := h.svc.FinishLogin(r.Context(),
 		[]byte(response.Response.CollectedClientData.Challenge), response)
 	if err != nil {
+		h.emit(r, StagePasskeySignInDone, OutcomeFail, "verify_failed")
 		generic(w)
 		return
 	}
-	h.establishSession(w, r, user, amr)
+	h.establishSession(w, r, user, amr, StagePasskeySignInDone)
 }
 
 // establishSession adds the account that just completed a ceremony to this
 // browser, and, when the ceremony was part of a site's sign-in, completes that
 // authorization request with it.
-func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *store.User, amr []string) {
+//
+// stage is the ceremony's finished stage, reported once the outcome is known.
+func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *store.User, amr []string, stage SignInStage) {
 	token, sess, err := h.db.AddSession(r.Context(), browserToken(r), user.ID, amr, r.UserAgent(), h.clientIP(r))
 	if errors.Is(err, store.ErrTooManyAccounts) {
+		h.emit(r, stage, OutcomeFail, "too_many_accounts")
 		writeError(w, http.StatusConflict, &kitprotocol.Error{
 			Code:        "too_many_accounts",
 			Description: "sign out of an account on this browser before adding another",
@@ -153,11 +178,13 @@ func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *st
 		return
 	}
 	if err != nil {
+		h.emit(r, stage, OutcomeFail, "server_error")
 		slog.ErrorContext(r.Context(), "adding session", "err", err)
 		writeError(w, http.StatusInternalServerError, &kitprotocol.Error{Code: kitprotocol.ErrServerError})
 		return
 	}
 	SetSSOCookie(w, h.cfg.BasePath(), token, time.Now().Add(store.SessionTTL), !h.cfg.DevInsecure)
+	h.emit(r, stage, OutcomeOK, "")
 
 	next := h.cfg.BasePath() + "/u/" + strconv.Itoa(sess.Ordinal) + "/"
 	if id := r.URL.Query().Get("authRequestID"); id != "" {
@@ -181,11 +208,14 @@ func (h *Auth) continueAuthRequest(r *http.Request, id string, user *store.User,
 		return h.cfg.BasePath() + "/u/" + strconv.Itoa(sess.Ordinal) + "/"
 	}
 	if ar.HintSubject != "" && ar.HintSubject != user.Subject {
+		h.emitFor(r, id, ar.ClientID, StageRedirected, OutcomeFail, "account_mismatch", "server")
 		return retry
 	}
 	if err := h.db.CompleteAuthRequest(r.Context(), ar.ID, user.ID, sess.SID, sess.AuthenticatedAt, sess.AMR); err != nil {
+		h.emitFor(r, id, ar.ClientID, StageRedirected, OutcomeFail, "complete_failed", "server")
 		return retry
 	}
+	h.emitFor(r, id, ar.ClientID, StageRedirected, OutcomeOK, "", "server")
 	return callbackURL(h.cfg.Issuer, id)
 }
 

@@ -27,6 +27,7 @@ func (l *Login) Start(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("authRequestID")
 	ar, err := l.auth.db.AuthRequestByID(ctx, id)
 	if err != nil {
+		l.auth.emit(r, StagePageShown, OutcomeFail, "request_expired")
 		l.auth.pages.message(w, http.StatusBadRequest, "This sign-in link has expired",
 			"Go back to the site you were signing in to and try again.")
 		return
@@ -143,11 +144,18 @@ func (l *Login) complete(w http.ResponseWriter, r *http.Request, ar *store.AuthR
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
 	}
+	l.auth.emitFor(r, ar.ID, ar.ClientID, StageRedirected, OutcomeOK, "", "server")
 	http.Redirect(w, r, callbackURL(l.auth.cfg.Issuer, ar.ID), http.StatusFound)
 }
 
 // fail sends a protocol error back to the client's registered redirect URI.
 func (l *Login) fail(w http.ResponseWriter, r *http.Request, ar *store.AuthRequest, err error) {
+	reason := "error"
+	var oerr *oidc.Error
+	if errors.As(err, &oerr) {
+		reason = string(oerr.ErrorType)
+	}
+	l.auth.emitFor(r, ar.ID, ar.ClientID, StageRedirected, OutcomeFail, reason, "server")
 	op.AuthRequestError(w, r, errAuthRequest{ar}, err, l.auth.op)
 }
 

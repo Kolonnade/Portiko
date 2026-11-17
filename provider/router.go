@@ -33,6 +33,7 @@ var endpointLimits = map[string]limit{
 	"login.start":     loginStarts,
 	"login.finish":    loginFinishes,
 	"oauth.token":     tokenRequests,
+	"signin.event":    signInEvents,
 }
 
 // Router builds the complete HTTP surface.
@@ -90,6 +91,7 @@ func Router(d Deps) http.Handler {
 	mux.HandleFunc("POST /login/select", d.Login.Select)
 
 	mux.HandleFunc("GET /signin", d.Pages.SignIn)
+	mux.HandleFunc("POST /signin/event", limited("signin.event", nil, d.Auth.SignInEvent))
 	mux.HandleFunc("GET /profile", d.Pages.ProfileRedirect)
 	mux.HandleFunc("GET /u/{n}/{$}", d.Pages.Home)
 	mux.HandleFunc("GET /u/{n}/profile", d.Pages.Profile)

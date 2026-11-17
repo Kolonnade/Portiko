@@ -51,6 +51,15 @@ type Options struct {
 	// registration also stops sign-ups already in flight. When set it replaces the REGISTRATION / BOOTSTRAP_CODE decision;
 	// nil leaves that setting in charge.
 	RegistrationPolicy RegistrationPolicy
+	// OnSignInEvent, when set, is called once for each stage of each sign-in
+	// attempt on the sign-in page: shown, email submitted, code sent and
+	// verified, passkey created or used, and the redirect back to the site
+	// (docs/sign-in-events.md). It is called synchronously on the request
+	// goroutine, so it must return fast; hand the event off rather than doing
+	// I/O inline. An event never carries an email address, IP address or user
+	// ID, and Portiko stores none of them: this hook is the only sink. Nil, the
+	// default, turns the events off.
+	OnSignInEvent func(context.Context, SignInEvent)
 }
 
 // Provider is a running identity provider.
@@ -102,7 +111,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		profiles = builtinProfiles{db: db}
 	}
 
-	auth := &Auth{policySet: opts.RegistrationPolicy != nil, cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m, opts.RegistrationPolicy), ring: ring, profiles: profiles}
+	auth := &Auth{policySet: opts.RegistrationPolicy != nil, cfg: cfg, db: db, svc: accounts.New(cfg, db, wa, m, opts.RegistrationPolicy), ring: ring, profiles: profiles, onEvent: opts.OnSignInEvent}
 	st := &storage{db: db, ring: ring, cfg: cfg, profiles: profiles, ended: auth.notifyLogout}
 
 	opOpts := []op.Option{
@@ -154,6 +163,7 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if err != nil {
 		return fail(err)
 	}
+	rl.onLimited = auth.limitedEvent
 	// Loud, because the failure mode is not a security hole but an outage: behind
 	// a reverse proxy with nothing trusted, every request's address is the proxy's
 	// loopback address, so one per-IP budget is shared by everybody who uses the

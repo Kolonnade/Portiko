@@ -87,6 +87,8 @@ type limiter struct {
 	db      *store.DB
 	cfg     *config.Config
 	buckets map[string]golimiter.Store
+	// onLimited, when set, hears about every refused request, by endpoint name.
+	onLimited func(*http.Request, string)
 }
 
 // newLimiter builds the in-process stores, one per endpoint, so each endpoint's
@@ -135,6 +137,7 @@ func (l *limiter) wrap(name string, lim limit, address func(*http.Request) strin
 				return
 			}
 			if !ok {
+				l.reportLimited(r, name)
 				limited(w, r, name, "ip", time.Until(time.Unix(0, int64(reset))))
 				return
 			}
@@ -150,12 +153,19 @@ func (l *limiter) wrap(name string, lim limit, address func(*http.Request) strin
 					return
 				}
 				if !d.OK {
+					l.reportLimited(r, name)
 					limited(w, r, name, "address", d.RetryAfter)
 					return
 				}
 			}
 		}
 		next(w, r)
+	}
+}
+
+func (l *limiter) reportLimited(r *http.Request, name string) {
+	if l.onLimited != nil {
+		l.onLimited(r, name)
 	}
 }
 

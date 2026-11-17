@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -124,7 +125,9 @@ func (s *Service) VerifyCode(ctx context.Context, email, code string) (*Verified
 	pending, err := s.db.VerifyPendingCode(ctx, email, code)
 	if err != nil {
 		logStep(ctx, "register: verifying code", err)
-		return nil, ErrAuthFailed
+		// The cause rides along for the provider's sign-in events; the HTTP
+		// answer stays generic.
+		return nil, fmt.Errorf("%w: %w", ErrAuthFailed, err)
 	}
 
 	// Registration may have been closed since the code was sent. Ask again, and

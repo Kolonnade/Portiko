@@ -219,10 +219,19 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, to, http.StatusFound)
 		return
 	}
+	flow := id
+	if flow == "" {
+		flow = newFlowID()
+	}
+	if p.auth.onEvent != nil {
+		p.auth.emitFor(r, flow, p.auth.clientFor(r.Context(), id), StagePageShown, OutcomeOK, "", "server")
+	}
 	p.render(w, http.StatusOK, "signin.html", map[string]any{
 		"ServiceName":   p.cfg.ServiceName,
 		"ReturnTo":      returnTo,
 		"AuthRequestID": id,
+		"FlowID":        flow,
+		"SignInEvents":  p.auth.onEvent != nil,
 		"Adding":        len(list) > 0,
 		"CodeRequired":  p.cfg.RegistrationMode() == config.RegistrationCode && !p.auth.policySet,
 	})
