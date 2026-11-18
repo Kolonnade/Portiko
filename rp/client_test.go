@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/Kolonnade/Portiko/protocol"
 	"github.com/Kolonnade/Portiko/rp"
@@ -70,5 +71,164 @@ func TestLoginHandlerForwardsPrompt(t *testing.T) {
 		if !tc.sent && got != "" {
 			t.Errorf("prompt=%s: forwarded %q, want nothing", tc.prompt, got)
 		}
+	}
+}
+
+// fakeIssuer is a provider that serves discovery and records end_session calls.
+type fakeIssuer struct {
+	srv        *httptest.Server
+	endStatus  int
+	endCalls   int
+	endRequest url.Values
+}
+
+func newFakeIssuer(t *testing.T, endStatus int) *fakeIssuer {
+	t.Helper()
+	f := &fakeIssuer{endStatus: endStatus}
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issuer := f.srv.URL
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 issuer,
+				"authorization_endpoint": issuer + "/oauth/authorize",
+				"token_endpoint":         issuer + "/oauth/token",
+				"jwks_uri":               issuer + "/.well-known/jwks.json",
+				"end_session_endpoint":   issuer + "/oauth/end_session",
+			})
+		case protocol.WellKnownPath:
+			_ = json.NewEncoder(w).Encode(protocol.Configuration{
+				Protocol: protocol.Name, Issuer: issuer,
+				VersionsSupported: []string{protocol.VersionMax.String()},
+				VersionMinimum:    protocol.VersionMin.String(),
+				VersionPreferred:  protocol.VersionMax.String(),
+			})
+		case "/.well-known/jwks.json":
+			_, _ = w.Write([]byte(`{"keys":[]}`))
+		case "/oauth/end_session":
+			_ = r.ParseForm()
+			f.endCalls++
+			f.endRequest = r.Form
+			if f.endStatus == http.StatusFound {
+				http.Redirect(w, r, issuer+"/signed-out", http.StatusFound)
+				return
+			}
+			w.WriteHeader(f.endStatus)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
+func newEndSessionClient(t *testing.T, f *fakeIssuer) (*rp.Client, *session.MemoryStore) {
+	t.Helper()
+	store := session.NewMemoryStore()
+	c, err := rp.New(context.Background(), rp.Config{
+		Issuer: f.srv.URL, ClientID: "site", ClientSecret: "s",
+		RedirectURL: "http://site.test/auth/callback", Sessions: store,
+		Insecure: true, CookieKey: bytes.Repeat([]byte("k"), 32),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, store
+}
+
+func seedSession(t *testing.T, store *session.MemoryStore, idToken string) *session.Session {
+	t.Helper()
+	s := &session.Session{
+		ID: "sess-1", Subject: "sub", IDToken: idToken,
+		AccessExpiry: time.Now().Add(time.Hour), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	if err := store.Put(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func signOut(h http.Handler, cookie string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/auth/signout", nil)
+	if cookie != "" {
+		req.AddCookie(&http.Cookie{Name: session.CookieName, Value: cookie})
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func clearsCookie(rec *httptest.ResponseRecorder) bool {
+	for _, ck := range rec.Result().Cookies() {
+		if ck.Name == session.CookieName && ck.MaxAge < 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEndSessionHandler_CallsProviderWithHint(t *testing.T) {
+	f := newFakeIssuer(t, http.StatusFound)
+	c, store := newEndSessionClient(t, f)
+	s := seedSession(t, store, "tok")
+
+	rec := signOut(c.EndSessionHandler("/welcome"), s.ID)
+	if f.endCalls != 1 {
+		t.Fatalf("end_session called %d times, want 1", f.endCalls)
+	}
+	if got := f.endRequest.Get("id_token_hint"); got != "tok" {
+		t.Errorf("id_token_hint = %q, want tok", got)
+	}
+	if got := f.endRequest.Get("client_id"); got != "site" {
+		t.Errorf("client_id = %q, want site", got)
+	}
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/welcome" {
+		t.Fatalf("got %d %q, want 302 /welcome", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := store.Get(context.Background(), s.ID); err == nil {
+		t.Error("the site session survived signing out")
+	}
+	if !clearsCookie(rec) {
+		t.Error("the session cookie was not cleared")
+	}
+}
+
+func TestEndSessionHandler_ProviderDownStillSignsOut(t *testing.T) {
+	f := newFakeIssuer(t, http.StatusInternalServerError)
+	c, store := newEndSessionClient(t, f)
+	s := seedSession(t, store, "tok")
+
+	rec := signOut(c.EndSessionHandler("/welcome"), s.ID)
+	if f.endCalls != 1 {
+		t.Fatalf("end_session called %d times, want 1", f.endCalls)
+	}
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/welcome" {
+		t.Fatalf("got %d %q, want 302 /welcome", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := store.Get(context.Background(), s.ID); err == nil {
+		t.Error("the site session survived a failed provider call")
+	}
+}
+
+func TestEndSessionHandler_NoSession(t *testing.T) {
+	f := newFakeIssuer(t, http.StatusFound)
+	c, _ := newEndSessionClient(t, f)
+
+	rec := signOut(c.EndSessionHandler("/welcome"), "")
+	if f.endCalls != 0 {
+		t.Errorf("end_session called %d times with no session", f.endCalls)
+	}
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/welcome" {
+		t.Fatalf("got %d %q, want 302 /welcome", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestEndSessionHandler_AfterIsLocal(t *testing.T) {
+	f := newFakeIssuer(t, http.StatusFound)
+	c, _ := newEndSessionClient(t, f)
+
+	rec := signOut(c.EndSessionHandler("https://evil.example/"), "")
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Fatalf("Location = %q, want /", got)
 	}
 }

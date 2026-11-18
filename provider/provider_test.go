@@ -1960,3 +1960,100 @@ func TestNewRefusesUnreservedTestMailDomain(t *testing.T) {
 		}
 	}
 }
+
+// idTokenFor signs the named account in to the site and returns its ID token
+// and refresh token.
+func (h *harness) idTokenFor(s *site, email string) (idToken, refresh string) {
+	h.t.Helper()
+	loc, resp := h.authorize(s.clientID, s.url+"/auth/callback", "openid offline_access",
+		url.Values{"login_hint": {email}})
+	if loc == nil || loc.Query().Get("code") == "" {
+		h.t.Fatalf("authorize for %s issued no code: %v %v", email, loc, resp)
+	}
+	out := h.redeemCode(s, loc.Query().Get("code"))
+	idToken, _ = out["id_token"].(string)
+	refresh, _ = out["refresh_token"].(string)
+	if idToken == "" {
+		h.t.Fatalf("no id_token for %s: %v", email, out)
+	}
+	return idToken, refresh
+}
+
+// endSession posts RP-initiated logout as a site's server would.
+func (h *harness) endSession(s *site, idToken string) *http.Response {
+	h.t.Helper()
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.PostForm(h.srv.URL+"/oauth/end_session",
+		url.Values{"id_token_hint": {idToken}, "client_id": {s.clientID}})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp
+}
+
+func (h *harness) ssoSessions(email string) (count int, isDefault bool) {
+	h.t.Helper()
+	if err := h.db.Pool().QueryRow(context.Background(),
+		`SELECT count(*), coalesce(bool_or(s.is_default), false)
+		   FROM sso_sessions s JOIN users u ON u.id = s.user_id WHERE u.subject = $1`,
+		h.subjectOf(email)).Scan(&count, &isDefault); err != nil {
+		h.t.Fatal(err)
+	}
+	return count, isDefault
+}
+
+func TestEndSessionWithHintEndsOnlyThatAccount(t *testing.T) {
+	h := newHarness(t)
+	h.register("alice@example.com")
+	h.register("bob@example.com")
+	s := h.newSite("groups")
+	aliceID, aliceRefresh := h.idTokenFor(s, "alice@example.com")
+
+	if resp := h.endSession(s, aliceID); resp.StatusCode >= 400 {
+		t.Fatalf("end_session: %d", resp.StatusCode)
+	}
+	if n, _ := h.ssoSessions("alice@example.com"); n != 0 {
+		t.Errorf("alice has %d sessions after end_session, want 0", n)
+	}
+	if n, def := h.ssoSessions("bob@example.com"); n != 1 || !def {
+		t.Errorf("bob has %d sessions (default %v), want 1 default", n, def)
+	}
+	if aliceRefresh != "" {
+		status, _ := h.token(url.Values{
+			"grant_type": {"refresh_token"}, "refresh_token": {aliceRefresh},
+			"client_id": {s.clientID}, "client_secret": {s.secret},
+		})
+		if status == http.StatusOK {
+			t.Error("alice's refresh token still works after end_session")
+		}
+	}
+}
+
+func TestEndSessionUnknownSIDIsNotAnError(t *testing.T) {
+	h := newHarness(t)
+	h.register("again@example.com")
+	s := h.newSite("groups")
+	idToken, _ := h.idTokenFor(s, "again@example.com")
+
+	if resp := h.endSession(s, idToken); resp.StatusCode >= 400 {
+		t.Fatalf("first end_session: %d", resp.StatusCode)
+	}
+	if resp := h.endSession(s, idToken); resp.StatusCode >= 400 {
+		t.Fatalf("end_session for an ended session: %d", resp.StatusCode)
+	}
+}
+
+func TestSelectAccountWithNoSessionsGoesToSignIn(t *testing.T) {
+	h := newHarness(t)
+	s := h.newSite("groups")
+	loc, resp := h.authorize(s.clientID, s.url+"/auth/callback", "openid",
+		url.Values{"prompt": {"select_account"}})
+	if loc != nil {
+		t.Fatalf("select_account with no sessions completed: %v", loc)
+	}
+	defer resp.Body.Close()
+	if !strings.HasSuffix(resp.Request.URL.Path, "/signin") {
+		t.Fatalf("select_account with no sessions landed on %s, want the sign-in page", resp.Request.URL.Path)
+	}
+}

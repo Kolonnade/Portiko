@@ -70,7 +70,8 @@ func (l *Login) Start(w http.ResponseWriter, r *http.Request) {
 		// The site asked for a new account: never complete silently and never
 		// offer the chooser, even when accounts are signed in.
 		http.Redirect(w, r, l.auth.cfg.BasePath()+"/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
-	case prompt(oidc.PromptLogin):
+	case prompt(oidc.PromptLogin), prompt(oidc.PromptSelectAccount) && len(candidates) == 0:
+		// Asked to sign in afresh, or to choose with nobody to choose from.
 		http.Redirect(w, r, l.auth.cfg.BasePath()+"/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
 	case prompt(oidc.PromptSelectAccount) || len(candidates) > 1:
 		l.auth.pages.chooser(w, r, chooserData{

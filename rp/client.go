@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -78,6 +79,9 @@ const (
 	leeway       = 30 * time.Second
 	sessionTTL   = 30 * 24 * time.Hour
 	fetchTimeout = 10 * time.Second
+	// endSessionTimeout bounds the call to the provider at sign-out, so a
+	// provider that is down delays leaving the site by seconds, not minutes.
+	endSessionTimeout = 3 * time.Second
 )
 
 // New discovers the provider and returns a client.
@@ -262,6 +266,7 @@ func (c *Client) finishSignIn(w http.ResponseWriter, r *http.Request, tokens *oi
 		ProfileVersion: claims.UpdatedAt,
 		AccessToken:    tokens.AccessToken,
 		RefreshToken:   tokens.RefreshToken,
+		IDToken:        tokens.IDToken,
 		AccessExpiry:   tokens.Expiry,
 		ExpiresAt:      time.Now().Add(sessionTTL),
 	}
@@ -295,6 +300,33 @@ func (c *Client) LogoutHandler() http.Handler {
 		}
 		session.ClearCookie(w, !c.cfg.Insecure)
 		http.Redirect(w, r, "/", http.StatusFound)
+	})
+}
+
+// EndSessionHandler signs the person out of this site and ends the account's
+// session at the provider, then redirects to after (a local path).
+//
+// Unlike LogoutHandler, the account is signed out at the provider too, so the
+// next sign-in asks again. Only this account ends: other accounts signed in to
+// the same browser stay signed in, and the provider tells the other sites that
+// held this account's session through back-channel logout. The provider is
+// called server to server with the session's ID token as id_token_hint; the
+// browser never visits the provider. If that call fails, the site's own
+// session still ends.
+func (c *Client) EndSessionHandler(after string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ck, err := r.Cookie(session.CookieName); err == nil {
+			if sess, err := c.cfg.Sessions.Get(r.Context(), ck.Value); err == nil && sess.IDToken != "" {
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), endSessionTimeout)
+				if _, err := zrp.EndSession(ctx, c.rp, sess.IDToken, "", "", "", nil); err != nil {
+					slog.WarnContext(ctx, "rp: ending the provider session", "err", err)
+				}
+				cancel()
+			}
+			_ = c.cfg.Sessions.Delete(r.Context(), ck.Value)
+		}
+		session.ClearCookie(w, !c.cfg.Insecure)
+		http.Redirect(w, r, localPath(after), http.StatusFound)
 	})
 }
 
@@ -413,6 +445,9 @@ func (c *Client) refresh(ctx context.Context, sess *session.Session) error {
 	sess.AccessExpiry = tokens.Expiry
 	if tokens.RefreshToken != "" {
 		sess.RefreshToken = tokens.RefreshToken
+	}
+	if tokens.IDToken != "" {
+		sess.IDToken = tokens.IDToken
 	}
 	return c.cfg.Sessions.Put(ctx, sess)
 }

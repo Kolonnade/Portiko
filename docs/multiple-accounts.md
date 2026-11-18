@@ -38,12 +38,24 @@ Portiko uses the standard OpenID Connect parameters rather than inventing any:
 | No hint, several sessions | The chooser |
 | `login_hint` matching a signed-in account | That account, no interface |
 | `id_token_hint` | That subject's session, or re-authentication of it |
-| `prompt=select_account` | Always the chooser — this is what a site's "switch account" button sends |
+| `prompt=select_account` | The chooser — this is what a site's "switch account" button sends |
+| `prompt=select_account`, no sessions | The sign-in page; an empty chooser offers nothing to choose |
 | `prompt=create` | The sign-in page, opened on account creation; never silent, never the chooser |
 | `prompt=none`, several sessions, no hint | The `account_selection_required` error |
 | No session at all | The passkey ceremony |
 
 A site switching accounts therefore costs one redirect and no passkey prompt, because the account is already signed in at the provider.
+
+## Signing out of a site
+
+The `rp` package offers two ways out, and a site chooses per button:
+
+| Handler | Ends |
+|---|---|
+| `LogoutHandler` | This site's session only. The account stays signed in at the provider, so the next sign-in here completes without asking. |
+| `EndSessionHandler(after)` | This site's session and this account's session at the provider. The next sign-in asks again. |
+
+`EndSessionHandler` keeps the ID token from sign-in on the server and sends it to the provider's `end_session_endpoint` as `id_token_hint`, server to server; the browser never visits the provider. The provider ends only the session that token names: other accounts signed in to the same browser stay signed in, and one of them becomes the default. Every other site that held the ended session is told through back-channel logout. If the provider cannot be reached, the site's own session still ends.
 
 ## How a client says which account
 

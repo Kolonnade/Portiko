@@ -33,8 +33,11 @@ type Session struct {
 	ProfileVersion int64
 	AccessToken    string
 	RefreshToken   string
-	AccessExpiry   time.Time
-	ExpiresAt      time.Time
+	// IDToken is the raw ID token from the provider. It stays on the server and
+	// is sent back as id_token_hint when the person signs out at the provider.
+	IDToken      string
+	AccessExpiry time.Time
+	ExpiresAt    time.Time
 }
 
 // Expired reports whether the session itself has lapsed.
