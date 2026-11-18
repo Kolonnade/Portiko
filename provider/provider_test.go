@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
@@ -25,6 +27,7 @@ import (
 	"time"
 
 	"github.com/descope/virtualwebauthn"
+	jose "github.com/go-jose/go-jose/v4"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/Kolonnade/Portiko/internal/keys"
@@ -2055,5 +2058,67 @@ func TestSelectAccountWithNoSessionsGoesToSignIn(t *testing.T) {
 	defer resp.Body.Close()
 	if !strings.HasSuffix(resp.Request.URL.Path, "/signin") {
 		t.Fatalf("select_account with no sessions landed on %s, want the sign-in page", resp.Request.URL.Path)
+	}
+}
+
+// An ID token lives minutes and a site session lives weeks, so the hint a site
+// sends at sign-out has almost always expired. Logout must still end the
+// session (OpenID Connect RP-Initiated Logout 1.0, section 2).
+func TestEndSessionExpiredHintStillEnds(t *testing.T) {
+	h := newHarness(t)
+	h.register("late@example.com")
+	s := h.newSite("groups")
+	idToken, _ := h.idTokenFor(s, "late@example.com")
+
+	// Re-sign the same claims with the provider's own key, aged past expiry.
+	parsed, err := jose.ParseSigned(idToken, []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(parsed.UnsafePayloadWithoutVerification(), &claims); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-2 * time.Hour).Unix()
+	claims["iat"], claims["exp"] = past, past+int64(provider.IDTokenTTL/time.Second)
+	if _, ok := claims["auth_time"]; ok {
+		claims["auth_time"] = past
+	}
+
+	kid := h.ringKID(t)
+	var blob []byte
+	if err := h.db.Pool().QueryRow(context.Background(),
+		`SELECT private_key FROM signing_keys WHERE kid = $1`, kid).Scan(&blob); err != nil {
+		t.Fatal(err)
+	}
+	pemKey, err := h.sealer().Unseal(kid, blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(pemKey)
+	priv, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: priv},
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", kid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(claims)
+	jws, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, err := jws.CompactSerialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp := h.endSession(s, expired); resp.StatusCode >= 400 {
+		t.Fatalf("end_session with an expired hint: %d", resp.StatusCode)
+	}
+	if n, _ := h.ssoSessions("late@example.com"); n != 0 {
+		t.Errorf("late has %d sessions after end_session with an expired hint, want 0", n)
 	}
 }
