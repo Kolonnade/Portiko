@@ -115,3 +115,39 @@ func TestLoadTestMailDomains(t *testing.T) {
 		t.Errorf("unset: %v, %v", c, err)
 	}
 }
+
+func TestLoadRateLimitExempt(t *testing.T) {
+	t.Setenv("ISSUER", "https://example.com")
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("WEBAUTHN_RP_ID", "example.com")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://example.com")
+	t.Setenv("CRYPTO_KEY", strings.Repeat("ab", 32))
+	t.Setenv("REGISTRATION", "closed")
+	t.Setenv("BOOTSTRAP_CODE", "")
+
+	t.Setenv("RATE_LIMIT_EXEMPT", "")
+	c, err := Load()
+	if err != nil || c.RateLimitExempt != nil {
+		t.Fatalf("unset: %v, %v", c, err)
+	}
+
+	t.Setenv("RATE_LIMIT_EXEMPT", " 198.51.100.7 , 10.1.2.3/8, 2001:db8::/32")
+	c, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var got []string
+	for _, p := range c.RateLimitExempt {
+		got = append(got, p.String())
+	}
+	if strings.Join(got, ",") != "198.51.100.7/32,10.0.0.0/8,2001:db8::/32" {
+		t.Errorf("RateLimitExempt = %v", got)
+	}
+
+	for _, bad := range []string{"0.0.0.0/0", "::/0", "not-an-ip"} {
+		t.Setenv("RATE_LIMIT_EXEMPT", "198.51.100.7,"+bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "RATE_LIMIT_EXEMPT") {
+			t.Errorf("%q must stop Load, got %v", bad, err)
+		}
+	}
+}

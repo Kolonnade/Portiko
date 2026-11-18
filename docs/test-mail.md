@@ -45,7 +45,9 @@ A harness finds the latest line with `to=<address>` and takes `code=(\d{6})`
 from it. Use a fresh address per run.
 
 The [rate limits](rate-limits.md) still apply to test addresses: five codes per
-address per hour, ten guesses per address per hour.
+address per hour, ten guesses per address per hour. A test deployment whose suite
+runs often from one machine can list that machine in `RATE_LIMIT_EXEMPT` to skip
+the endpoint limits; the guess budget still applies.
 
 ## Never on production
 

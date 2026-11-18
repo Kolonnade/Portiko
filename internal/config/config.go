@@ -105,6 +105,15 @@ type Config struct {
 	// real mailbox can ever be captured. Lowercased; exact match.
 	TestMailDomains []string
 
+	// RateLimitExempt lists addresses whose requests skip the per-IP and
+	// per-address endpoint rate limits, so an end-to-end suite run several times
+	// an hour from one machine is not refused. The address checked is the one
+	// TrustedProxies resolves, not the connection's. Test deployments only; never
+	// set it on production. A prefix covering a whole address family (0.0.0.0/0,
+	// ::/0) is refused, so this can never become a switch that turns the limits
+	// off for everyone. The per-address code-guess budget still applies.
+	RateLimitExempt []netip.Prefix
+
 	base    string // BasePath, validated by Load
 	baseSet bool
 }
@@ -292,6 +301,23 @@ func Load() (*Config, error) {
 		c.TrustedProxies = append(c.TrustedProxies, prefix)
 	}
 
+	for _, p := range strings.Split(os.Getenv("RATE_LIMIT_EXEMPT"), ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		prefix, err := parsePrefix(p)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("RATE_LIMIT_EXEMPT: %q is not an IP address or CIDR", p))
+			continue
+		}
+		if err := CheckRateLimitExempt(prefix); err != nil {
+			problems = append(problems, "RATE_LIMIT_EXEMPT: "+err.Error())
+			continue
+		}
+		c.RateLimitExempt = append(c.RateLimitExempt, prefix.Masked())
+	}
+
 	for _, d := range strings.Split(os.Getenv("TEST_MAIL_DOMAINS"), ",") {
 		d = strings.ToLower(strings.TrimSpace(d))
 		if d == "" {
@@ -348,6 +374,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// CheckRateLimitExempt refuses an exemption that covers a whole address
+// family: that is not a test machine, it is the rate limits switched off.
+func CheckRateLimitExempt(p netip.Prefix) error {
+	if !p.IsValid() {
+		return fmt.Errorf("%q is not a valid prefix", p)
+	}
+	if p.Bits() == 0 {
+		return fmt.Errorf("%q covers every address; list the test machines instead", p)
+	}
+	return nil
 }
 
 // parsePrefix accepts either a CIDR or a bare address, which becomes a prefix

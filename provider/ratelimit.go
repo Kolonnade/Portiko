@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"time"
 
@@ -129,6 +130,10 @@ func (l *limiter) close() {
 func (l *limiter) wrap(name string, lim limit, address func(*http.Request) string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(l.cfg.TrustedProxies, r)
+		if l.exempt(ip) {
+			next(w, r)
+			return
+		}
 		if s := l.buckets[name]; s != nil && ip != "" {
 			_, _, reset, ok, err := s.Take(r.Context(), name+"|"+ip)
 			if err != nil {
@@ -161,6 +166,26 @@ func (l *limiter) wrap(name string, lim limit, address func(*http.Request) strin
 		}
 		next(w, r)
 	}
+}
+
+// exempt reports whether ip is in Config.RateLimitExempt. Test deployments
+// only: an exempt address skips both the per-IP and the per-address budget,
+// because an end-to-end suite runs from one machine and reuses its addresses.
+func (l *limiter) exempt(ip string) bool {
+	if len(l.cfg.RateLimitExempt) == 0 || ip == "" {
+		return false
+	}
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, p := range l.cfg.RateLimitExempt {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *limiter) reportLimited(r *http.Request, name string) {

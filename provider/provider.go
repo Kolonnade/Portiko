@@ -83,6 +83,11 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 			return nil, fmt.Errorf("provider: TestMailDomains: %q is not a lowercase reserved test domain (RFC 2606/6761)", d)
 		}
 	}
+	for _, p := range cfg.RateLimitExempt {
+		if err := config.CheckRateLimitExempt(p); err != nil {
+			return nil, fmt.Errorf("provider: RateLimitExempt: %w", err)
+		}
+	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
@@ -184,6 +189,15 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 		slog.Warn("TRUSTED_PROXIES is not set, so every request's address is its RemoteAddr; "+
 			"behind a reverse proxy that is one address for all callers and the per-IP rate limits are shared",
 			"issuer", cfg.Issuer)
+	}
+
+	if len(cfg.RateLimitExempt) > 0 {
+		exempt := make([]string, len(cfg.RateLimitExempt))
+		for i, p := range cfg.RateLimitExempt {
+			exempt[i] = p.String()
+		}
+		slog.Warn("RATE_LIMIT_EXEMPT is set: requests from these addresses skip the endpoint rate limits. Never set this on a production deployment.",
+			"addresses", strings.Join(exempt, ","))
 	}
 
 	router := Router(Deps{
