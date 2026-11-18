@@ -98,6 +98,13 @@ type Config struct {
 	// "127.0.0.1,::1"; list a bare address or a CIDR.
 	TrustedProxies []netip.Prefix
 
+	// TestMailDomains lists mail domains whose sign-in codes and notices are
+	// written to the log instead of sent, so an end-to-end test can read them.
+	// Test deployments only; never set it on production. Load accepts only
+	// names reserved by RFC 2606 and RFC 6761 (see ReservedTestDomain), so no
+	// real mailbox can ever be captured. Lowercased; exact match.
+	TestMailDomains []string
+
 	base    string // BasePath, validated by Load
 	baseSet bool
 }
@@ -285,6 +292,18 @@ func Load() (*Config, error) {
 		c.TrustedProxies = append(c.TrustedProxies, prefix)
 	}
 
+	for _, d := range strings.Split(os.Getenv("TEST_MAIL_DOMAINS"), ",") {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if d == "" {
+			continue
+		}
+		if !ReservedTestDomain(d) {
+			problems = append(problems, fmt.Sprintf("TEST_MAIL_DOMAINS: %q is not a reserved test domain (RFC 2606/6761)", d))
+			continue
+		}
+		c.TestMailDomains = append(c.TestMailDomains, d)
+	}
+
 	if key, err := decodeKey(os.Getenv("CRYPTO_KEY")); err != nil {
 		problems = append(problems, "CRYPTO_KEY "+err.Error()+" (generate one with: openssl rand -hex 32)")
 	} else {
@@ -295,6 +314,33 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: %s", strings.Join(problems, "; "))
 	}
 	return c, nil
+}
+
+// ReservedTestDomain reports whether d is a name reserved for testing by
+// RFC 2606 and RFC 6761, so mail to it can never reach a real mailbox: any
+// name under the .test, .invalid or .example top-level domains, and
+// example.com, example.net, example.org and their subdomains. It expects a
+// lowercase name; wildcards, empty labels and localhost are refused.
+func ReservedTestDomain(d string) bool {
+	if d == "" || strings.Contains(d, "*") || strings.HasPrefix(d, ".") || strings.HasSuffix(d, ".") {
+		return false
+	}
+	labels := strings.Split(d, ".")
+	for _, l := range labels {
+		if l == "" {
+			return false
+		}
+	}
+	switch labels[len(labels)-1] {
+	case "test", "invalid", "example":
+		return true
+	}
+	for _, base := range []string{"example.com", "example.net", "example.org"} {
+		if d == base || strings.HasSuffix(d, "."+base) {
+			return true
+		}
+	}
+	return false
 }
 
 func envOr(key, fallback string) string {

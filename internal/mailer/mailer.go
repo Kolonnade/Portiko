@@ -60,6 +60,49 @@ func (s *Stdout) SendPasskeyAdded(to string, n PasskeyNotice) error {
 	return nil
 }
 
+// TestDomains writes messages for a few test domains to the log and passes
+// every other message to Next.
+//
+// Test deployments only. Domains must be lowercase, and config only accepts
+// names reserved for testing, so no real mailbox is ever captured. The match
+// is exact on the text after the last @: a subdomain of a listed domain is
+// not matched, and an address with no @ never is.
+type TestDomains struct {
+	Domains []string
+	Next    Mailer
+}
+
+func (t *TestDomains) SendCode(to, code string) error {
+	if t.match(to) {
+		slog.Warn("test mail domain; not sending, logging instead", "to", to, "code", code)
+		return nil
+	}
+	return t.Next.SendCode(to, code)
+}
+
+func (t *TestDomains) SendPasskeyAdded(to string, n PasskeyNotice) error {
+	if t.match(to) {
+		slog.Warn("test mail domain; not sending, logging instead",
+			"to", to, "when", n.When, "authenticator", n.Authenticator, "review", n.ReviewURL)
+		return nil
+	}
+	return t.Next.SendPasskeyAdded(to, n)
+}
+
+func (t *TestDomains) match(to string) bool {
+	at := strings.LastIndex(to, "@")
+	if at < 0 {
+		return false
+	}
+	domain := strings.ToLower(to[at+1:])
+	for _, d := range t.Domains {
+		if domain == d {
+			return true
+		}
+	}
+	return false
+}
+
 // SMTP sends through a real server.
 type SMTP struct {
 	Host, Username, Password, From, ServiceName string

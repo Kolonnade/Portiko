@@ -1935,3 +1935,18 @@ func TestDiscoveryListsPromptValues(t *testing.T) {
 		}
 	}
 }
+
+// A listed reserved domain's code goes to the log, not the mailer; any other
+// address, even another reserved one, still reaches the mailer.
+func TestTestMailDomainsWrapsMailer(t *testing.T) {
+	t.Setenv("TEST_MAIL_DOMAINS", "example.test")
+	h := newHarness(t)
+	h.post("/accounts/v1/register/start", map[string]string{"email": "x@example.test"})
+	if n := h.sentCodes(); n != 0 {
+		t.Fatalf("a listed test domain reached the mailer %d times", n)
+	}
+	h.post("/accounts/v1/register/start", map[string]string{"email": "x@mail.example.net"})
+	if n := h.sentCodes(); n != 1 {
+		t.Fatalf("an unlisted address reached the mailer %d times, want 1", n)
+	}
+}

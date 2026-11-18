@@ -106,6 +106,11 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 			}
 		}
 	}
+	if len(cfg.TestMailDomains) > 0 {
+		slog.Warn("TEST_MAIL_DOMAINS is set: sign-in codes for these domains are written to the log, not emailed. Never set this on a production deployment.",
+			"domains", strings.Join(cfg.TestMailDomains, ","))
+		m = &mailer.TestDomains{Domains: cfg.TestMailDomains, Next: m}
+	}
 	profiles := opts.Profiles
 	if profiles == nil {
 		profiles = builtinProfiles{db: db}

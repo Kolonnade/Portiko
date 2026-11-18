@@ -72,3 +72,46 @@ func TestLoadValidatesTheIssuerPath(t *testing.T) {
 		}
 	}
 }
+
+func TestReservedTestDomain(t *testing.T) {
+	for _, d := range []string{"example.test", "a.b.test", "x.invalid", "foo.example", "example.com", "mail.example.org"} {
+		if !ReservedTestDomain(d) {
+			t.Errorf("%q should be reserved", d)
+		}
+	}
+	for _, d := range []string{"gmail.com", "test.com", "example.co", "notexample.com", "localhost", "*.test", ".test", "a..test", ""} {
+		if ReservedTestDomain(d) {
+			t.Errorf("%q should not be reserved", d)
+		}
+	}
+}
+
+func TestLoadTestMailDomains(t *testing.T) {
+	t.Setenv("ISSUER", "https://example.com")
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("WEBAUTHN_RP_ID", "example.com")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://example.com")
+	t.Setenv("CRYPTO_KEY", strings.Repeat("ab", 32))
+	t.Setenv("REGISTRATION", "closed")
+	t.Setenv("BOOTSTRAP_CODE", "")
+
+	t.Setenv("TEST_MAIL_DOMAINS", " Example.TEST , example.com")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := strings.Join(c.TestMailDomains, ","); got != "example.test,example.com" {
+		t.Errorf("TestMailDomains = %q", got)
+	}
+
+	t.Setenv("TEST_MAIL_DOMAINS", "example.test,gmail.com")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "gmail.com") {
+		t.Errorf("a real domain must stop Load, got %v", err)
+	}
+
+	t.Setenv("TEST_MAIL_DOMAINS", "")
+	c, err = Load()
+	if err != nil || c.TestMailDomains != nil {
+		t.Errorf("unset: %v, %v", c, err)
+	}
+}
