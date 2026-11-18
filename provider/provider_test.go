@@ -1950,3 +1950,13 @@ func TestTestMailDomainsWrapsMailer(t *testing.T) {
 		t.Fatalf("an unlisted address reached the mailer %d times, want 1", n)
 	}
 }
+
+// A Config built by hand, without Load, still cannot list a real domain.
+func TestNewRefusesUnreservedTestMailDomain(t *testing.T) {
+	for _, d := range []string{"gmail.com", "Example.TEST"} {
+		cfg := &provider.Config{Issuer: "https://id.example.com", TestMailDomains: []string{d}}
+		if _, err := provider.New(context.Background(), cfg, provider.Options{}); err == nil || !strings.Contains(err.Error(), "TestMailDomains") {
+			t.Fatalf("New with TestMailDomains %q: err = %v, want a TestMailDomains error", d, err)
+		}
+	}
+}

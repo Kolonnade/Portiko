@@ -77,6 +77,12 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if err := cfg.CheckIssuerPath(); err != nil {
 		return nil, fmt.Errorf("provider: %w", err)
 	}
+	// Load already refuses these; check again for a Config built by hand.
+	for _, d := range cfg.TestMailDomains {
+		if !config.ReservedTestDomain(d) {
+			return nil, fmt.Errorf("provider: TestMailDomains: %q is not a lowercase reserved test domain (RFC 2606/6761)", d)
+		}
+	}
 	db, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
