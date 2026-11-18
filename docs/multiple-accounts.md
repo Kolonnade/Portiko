@@ -39,6 +39,7 @@ Portiko uses the standard OpenID Connect parameters rather than inventing any:
 | `login_hint` matching a signed-in account | That account, no interface |
 | `id_token_hint` | That subject's session, or re-authentication of it |
 | `prompt=select_account` | Always the chooser — this is what a site's "switch account" button sends |
+| `prompt=create` | The sign-in page, opened on account creation; never silent, never the chooser |
 | `prompt=none`, several sessions, no hint | The `account_selection_required` error |
 | No session at all | The passkey ceremony |
 

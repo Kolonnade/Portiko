@@ -186,9 +186,13 @@ func nonceFromContext(ctx context.Context) string {
 	return n
 }
 
+// promptCreate is OpenID Connect's prompt=create; zitadel/oidc has no constant.
+const promptCreate = "create"
+
 // LoginHandler starts a sign-in. ?return_to= names a local path to come back
-// to; ?prompt=select_account asks the provider to offer its account chooser, and
-// ?login_hint= names the account to prefer.
+// to; ?prompt=select_account asks the provider to offer its account chooser,
+// ?prompt=login asks it to sign in afresh, ?prompt=create asks it to open on
+// account creation, and ?login_hint= names the account to prefer.
 func (c *Client) LoginHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -204,7 +208,7 @@ func (c *Client) LoginHandler() http.Handler {
 			return
 		}
 		params := []zrp.URLParamOpt{zrp.WithURLParam("nonce", nonce)}
-		if p := q.Get("prompt"); p == oidc.PromptSelectAccount || p == oidc.PromptLogin {
+		if p := q.Get("prompt"); p == oidc.PromptSelectAccount || p == oidc.PromptLogin || p == promptCreate {
 			params = append(params, zrp.WithPromptURLParam(p))
 		}
 		if h := q.Get("login_hint"); h != "" {

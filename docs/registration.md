@@ -92,3 +92,23 @@ The sign-in page shows the invitation-code field only in `code` mode with no
 `RegistrationPolicy`. A
 deployment with its own `TEMPLATE_DIR` must add the field itself, as
 `bootstrap_code` in the `register/start` body, or nobody can create an account.
+
+## Asking for a new account (`prompt=create`)
+
+A site that knows the person is new (a welcome page, an invitation link) can ask
+Portiko to open on account creation, using OpenID Connect's
+[`prompt=create`](https://openid.net/specs/openid-connect-prompt-create-1_0.html).
+With the `rp` package, link to the login handler with `?prompt=create`; any other
+client sends `prompt=create` on `/oauth/authorize`.
+
+- The request goes straight to `/signin`. It never completes silently and never
+  shows the account chooser, even when accounts are already signed in.
+- The sign-in template receives `.Create` set to true. The default template opens
+  on the email step; a deployment with its own `TEMPLATE_DIR` should open on its
+  registration step. `.Adding` still says whether accounts are signed in.
+- `prompt=create` combined with `none` is refused with `invalid_request`.
+- Discovery lists the prompt values Portiko honours as `prompt_values_supported`.
+
+`create` only chooses the first screen. It does not open registration:
+`REGISTRATION=closed` still refuses new accounts, and `code` mode still asks for
+the invitation code.

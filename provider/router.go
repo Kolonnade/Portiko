@@ -126,6 +126,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 // does not provide.
 var unserved = []string{"device_authorization_endpoint", "check_session_iframe"}
 
+// promptValues is advertised as prompt_values_supported, which zitadel/oidc's
+// discovery leaves out. It lists only the values Login.Start handles; there is
+// no consent screen, so consent is not among them.
+var promptValues = []string{"none", "login", "select_account", promptCreate}
+
 // servedOnly removes from the OpenID discovery document every endpoint Portiko
 // does not serve. A client written against discovery takes an advertised URL at
 // its word, so an endpoint appears only in the change that implements it.
@@ -145,6 +150,7 @@ func servedOnly(next http.Handler) http.Handler {
 		for _, k := range unserved {
 			delete(doc, k)
 		}
+		doc["prompt_values_supported"] = promptValues
 		var buf bytes.Buffer
 		_ = json.NewEncoder(&buf).Encode(doc)
 		for k, v := range rec.Header() {

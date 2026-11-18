@@ -51,6 +51,7 @@ const bufToB64u = b => btoa(String.fromCharCode(...new Uint8Array(b)))
 const AUTH_REQUEST = {{.AuthRequestID}};
 const RETURN_TO = {{.ReturnTo}};
 const ADDING = {{.Adding}};
+const CREATE = {{.Create}};
 // FLOW ties this attempt's steps together for the deployment's sign-in events;
 // EVENTS says whether anything is listening.
 const FLOW = {{.FlowID}};
@@ -78,6 +79,8 @@ let pending = null;
 const freshSignal = () => { if (pending) pending.abort(); pending = new AbortController(); return pending.signal; };
 
 document.getElementById('showEmail').onclick = e => { e.preventDefault(); show('emailStep'); };
+// A site asked for a new account: open on the email step.
+if (CREATE) show('emailStep');
 
 document.getElementById('usePasskey').onclick = async () => {
   msg('Waiting for your passkey…');

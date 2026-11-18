@@ -1867,3 +1867,71 @@ func TestNoPolicyLeavesStaticModeUnchanged(t *testing.T) {
 	h.withPolicy(nil)
 	h.refused("stranger@example.com", "") // still the silent 202
 }
+
+// prompt=create goes to the sign-in page opened on account creation, never a
+// silent completion and never the chooser, however many accounts are signed in.
+func TestPromptCreateSkipsSilentSignIn(t *testing.T) {
+	h := newHarness(t)
+	s := h.newSite("groups")
+	redirect := s.url + "/auth/callback"
+	for i, email := range []string{"alice@example.com", "bob@example.com"} {
+		h.register(email)
+		loc, resp := h.authorize(s.clientID, redirect, "openid", url.Values{"prompt": {"create"}})
+		if loc != nil {
+			t.Fatalf("%d account(s): prompt=create went back to the site: %v", i+1, loc)
+		}
+		body := bodyString(t, resp)
+		if !regexp.MustCompile(`const CREATE =\s*true\b`).MatchString(body) {
+			t.Errorf("%d account(s): sign-in page not opened on account creation", i+1)
+		}
+		if !regexp.MustCompile(`const ADDING =\s*true\b`).MatchString(body) {
+			t.Errorf("%d account(s): sign-in page does not say accounts are signed in", i+1)
+		}
+		if strings.Contains(body, "Choose an account") {
+			t.Errorf("%d account(s): prompt=create showed the chooser", i+1)
+		}
+	}
+}
+
+func TestPromptCreateWithNoneIsRefused(t *testing.T) {
+	h := newHarness(t)
+	s := h.newSite("groups")
+	loc, resp := h.authorize(s.clientID, s.url+"/auth/callback", "openid", url.Values{"prompt": {"none create"}})
+	if loc == nil {
+		t.Fatalf("prompt=none create showed a page: %d", resp.StatusCode)
+	}
+	if loc.Query().Get("error") != "invalid_request" {
+		t.Fatalf("prompt=none create: %v", loc.Query())
+	}
+}
+
+func TestSignInPageWithoutCreate(t *testing.T) {
+	h := newHarness(t)
+	s := h.newSite("groups")
+	loc, resp := h.authorize(s.clientID, s.url+"/auth/callback", "openid", nil)
+	if loc != nil {
+		t.Fatalf("authorize without a session went back to the site: %v", loc)
+	}
+	if body := bodyString(t, resp); !regexp.MustCompile(`const CREATE =\s*false\b`).MatchString(body) {
+		t.Errorf("sign-in page without prompt=create opened on account creation")
+	}
+}
+
+func TestDiscoveryListsPromptValues(t *testing.T) {
+	h := newHarness(t)
+	resp := h.get("/.well-known/openid-configuration")
+	var doc struct {
+		Prompts []string `json:"prompt_values_supported"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&doc)
+	resp.Body.Close()
+	for _, want := range []string{"none", "login", "select_account", "create"} {
+		found := false
+		for _, p := range doc.Prompts {
+			found = found || p == want
+		}
+		if !found {
+			t.Errorf("prompt_values_supported = %v, missing %q", doc.Prompts, want)
+		}
+	}
+}

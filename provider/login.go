@@ -21,6 +21,11 @@ import (
 // choose, or whether a passkey ceremony is needed.
 type Login struct{ auth *Auth }
 
+// promptCreate is OpenID Connect's prompt=create
+// (https://openid.net/specs/openid-connect-prompt-create-1_0.html): the site
+// asks for a new account. zitadel/oidc has no constant for it.
+const promptCreate = "create"
+
 // Start: GET /login?authRequestID=
 func (l *Login) Start(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -61,6 +66,10 @@ func (l *Login) Start(w http.ResponseWriter, r *http.Request) {
 			// request cannot ask them.
 			l.fail(w, r, ar, oidc.ErrInteractionRequired().WithDescription("account_selection_required: several accounts are signed in"))
 		}
+	case prompt(promptCreate):
+		// The site asked for a new account: never complete silently and never
+		// offer the chooser, even when accounts are signed in.
+		http.Redirect(w, r, l.auth.cfg.BasePath()+"/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
 	case prompt(oidc.PromptLogin):
 		http.Redirect(w, r, l.auth.cfg.BasePath()+"/signin?authRequestID="+url.QueryEscape(id), http.StatusFound)
 	case prompt(oidc.PromptSelectAccount) || len(candidates) > 1:

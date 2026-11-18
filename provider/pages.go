@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -219,6 +220,13 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, to, http.StatusFound)
 		return
 	}
+	// create says the site asked for a new account (prompt=create), so the page
+	// opens on account creation.
+	create := false
+	if id != "" {
+		ar, err := p.auth.db.AuthRequestByID(r.Context(), id)
+		create = err == nil && slices.Contains(ar.Prompt, promptCreate)
+	}
 	flow := id
 	if flow == "" {
 		flow = newFlowID()
@@ -233,6 +241,7 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 		"FlowID":        flow,
 		"SignInEvents":  p.auth.onEvent != nil,
 		"Adding":        len(list) > 0,
+		"Create":        create,
 		"CodeRequired":  p.cfg.RegistrationMode() == config.RegistrationCode && !p.auth.policySet,
 	})
 }
