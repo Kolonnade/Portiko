@@ -18,6 +18,7 @@
 </style>
 
 <h1>Your passkeys</h1>
+{{with .HeldUntil}}<p class="muted">You signed in with a passkey added by recovering this account. Until {{.Format "2 January 2006"}}, removing a passkey needs a passkey you had before.</p>{{end}}
 <p class="muted">These are the passkeys that can sign in to this account. Remove one you no longer use or have lost.</p>
 
 <ul id="list">
@@ -38,8 +39,11 @@
 <p class="muted"><a href="{{.Base}}/u/{{.Account}}/">Back</a></p>
 
 {{template "passkey-signal"}}
+{{template "passkey-reauth"}}
 <script>
 const ACCOUNT = {{.Account}};
+const PRIMARY = {{.Primary}};
+const API = '{{.Base}}/accounts/v1';
 const BASE = '{{.Base}}/accounts/v1/passkeys';
 const msg = t => document.getElementById('msg').textContent = t;
 
@@ -49,7 +53,7 @@ async function call(id, action, body) {
     body: JSON.stringify({ account: ACCOUNT, ...body }),
   });
   const out = await r.json().catch(() => ({}));
-  return { ok: r.ok, out };
+  return { status: r.status, ok: r.ok, out };
 }
 
 const list = document.getElementById('list');
@@ -70,7 +74,10 @@ list.addEventListener('click', async e => {
   const li = e.target.closest('li[data-id]');
   if (!confirm('Remove this passkey? Devices that rely on it will no longer be able to sign in.')) return;
   msg('Removing…');
-  const { ok, out } = await call(li.dataset.id, 'revoke', {});
+  // Removing a passkey needs a recent passkey sign-in, like changing addresses.
+  const res = await withReauth(() => call(li.dataset.id, 'revoke', {}), API, PRIMARY, msg);
+  if (!res) return;
+  const { ok, out } = res;
   if (!ok) { msg(out.error_description || 'Could not remove the passkey.'); return; }
   await signalAcceptedPasskeys(out.signal);
   location.reload();

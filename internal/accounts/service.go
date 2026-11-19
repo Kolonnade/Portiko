@@ -34,6 +34,34 @@ const (
 	pendingTokenSize = 32
 )
 
+// RecoveryHold is how long a passkey enrolled through recovery stays
+// restricted. Until it ends, a session signed in with that passkey may not
+// change the primary address, remove an address or revoke a passkey.
+//
+// Every address on an account can recover it, so whoever reads any one of them
+// can add a passkey. Without the hold they could then make their address
+// primary, remove the others and revoke the holder's passkeys within minutes,
+// before the notices of each step were read. With it, the holder has a week to
+// sign in with a passkey they already had, which is not restricted, and undo
+// it. A holder who really lost every passkey waits a week to make those
+// changes; adding an address and signing in to sites are not held.
+const RecoveryHold = 7 * 24 * time.Hour
+
+// SignIn is what a finished ceremony says about the passkey that was used.
+type SignIn struct {
+	AMR []string
+	// RestrictedUntil is the end of the passkey's RecoveryHold, or nil when it
+	// has none or it has passed.
+	RestrictedUntil *time.Time
+}
+
+func activeHold(until *time.Time) *time.Time {
+	if until == nil || !time.Now().Before(*until) {
+		return nil
+	}
+	return until
+}
+
 // ErrAuthFailed is the single error every failed ceremony returns.
 //
 // One error for every cause, deliberately: a caller must not be able to tell

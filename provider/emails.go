@@ -26,6 +26,7 @@ const ReauthWindow = 10 * time.Minute
 // Error codes of the email endpoints.
 const (
 	errReauthRequired = "reauthentication_required"
+	errRecoveryHold   = "recovery_hold"
 	errEmailLimit     = "email_limit_reached"
 	errPrimaryEmail   = "cannot_remove_primary_email"
 	errInvalidEmail   = "invalid_email"
@@ -54,12 +55,51 @@ type emailBody struct {
 	Code    string `json:"code"`
 }
 
+// guard is how much an account change asks of the session making it.
+type guard int
+
+const (
+	guardSession guard = iota // the session cookie is enough
+	guardReauth               // a passkey ceremony within ReauthWindow
+	guardHeld                 // guardReauth, and not with a passkey in its recovery hold
+)
+
+// refuse writes the refusal and returns its reason when the session behind a
+// may not make a change that needs g, or returns "".
+//
+// guardHeld covers the changes that take a way in away from the account:
+// changing the primary address, removing an address and revoking a passkey. A
+// passkey enrolled through recovery cannot make them until
+// accounts.RecoveryHold has passed (see there for why).
+func refuse(w http.ResponseWriter, a *account, g guard) string {
+	if g >= guardReauth && time.Since(a.AuthenticatedAt) > ReauthWindow {
+		writeError(w, http.StatusForbidden, &kitprotocol.Error{Code: errReauthRequired,
+			Description: "sign in with your passkey again to make this change"})
+		return errReauthRequired
+	}
+	if g >= guardHeld && heldUntil(&a.Session) != nil {
+		writeError(w, http.StatusForbidden, &kitprotocol.Error{Code: errRecoveryHold,
+			Description: "this passkey was added by recovering the account, so for a week it cannot remove addresses, " +
+				"change the primary address or remove passkeys; sign in with a passkey you had before to do it now"})
+		return errRecoveryHold
+	}
+	return ""
+}
+
+// heldUntil is when the session's recovery hold ends, or nil when it has none.
+func heldUntil(a *store.Session) *time.Time {
+	if a.RestrictedUntil == nil || !time.Now().Before(*a.RestrictedUntil) {
+		return nil
+	}
+	u := a.RestrictedUntil.UTC()
+	return &u
+}
+
 // emailRequest authenticates an email API call the way passkeyRequest does:
-// JSON, from this provider's own origin, naming its account. With reauth set it
-// also requires a recent passkey ceremony. A refusal is reported as a failure of
-// stage.
-func (h *Auth) emailRequest(w http.ResponseWriter, r *http.Request, stage SignInStage, reauth bool) (*account, *emailBody, bool) {
-	a, b, reason := h.emailRequestReason(w, r, reauth)
+// JSON, from this provider's own origin, naming its account, and then applies g.
+// A refusal is reported as a failure of stage.
+func (h *Auth) emailRequest(w http.ResponseWriter, r *http.Request, stage SignInStage, g guard) (*account, *emailBody, bool) {
+	a, b, reason := h.emailRequestReason(w, r, g)
 	if reason != "" {
 		h.emit(r, stage, OutcomeFail, reason)
 		return nil, nil, false
@@ -67,7 +107,7 @@ func (h *Auth) emailRequest(w http.ResponseWriter, r *http.Request, stage SignIn
 	return a, b, true
 }
 
-func (h *Auth) emailRequestReason(w http.ResponseWriter, r *http.Request, reauth bool) (*account, *emailBody, string) {
+func (h *Auth) emailRequestReason(w http.ResponseWriter, r *http.Request, g guard) (*account, *emailBody, string) {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		writeError(w, http.StatusUnsupportedMediaType, &kitprotocol.Error{
 			Code: kitprotocol.ErrInvalidRequest, Description: "expected application/json"})
@@ -94,10 +134,8 @@ func (h *Auth) emailRequestReason(w http.ResponseWriter, r *http.Request, reauth
 		writeError(w, http.StatusUnauthorized, &kitprotocol.Error{Code: kitprotocol.ErrLoginRequired})
 		return nil, nil, "login_required"
 	}
-	if reauth && time.Since(a.AuthenticatedAt) > ReauthWindow {
-		writeError(w, http.StatusForbidden, &kitprotocol.Error{Code: errReauthRequired,
-			Description: "sign in with your passkey again to change your email addresses"})
-		return nil, nil, errReauthRequired
+	if reason := refuse(w, a, g); reason != "" {
+		return nil, nil, reason
 	}
 	return a, &b, ""
 }
@@ -130,7 +168,7 @@ func (h *Auth) ListEmails(w http.ResponseWriter, r *http.Request) {
 // the address. Always 202 for an address that is not refused outright: one
 // already on an account is sent nothing, and the answer is the same.
 func (h *Auth) AddEmail(w http.ResponseWriter, r *http.Request) {
-	a, b, ok := h.emailRequest(w, r, StageEmailAdded, true)
+	a, b, ok := h.emailRequest(w, r, StageEmailAdded, guardReauth)
 	if !ok {
 		return
 	}
@@ -160,7 +198,7 @@ func (h *Auth) AddEmail(w http.ResponseWriter, r *http.Request) {
 // adds the address. A wrong code and an address taken by any account get the
 // same 401 authentication_failed.
 func (h *Auth) VerifyEmail(w http.ResponseWriter, r *http.Request) {
-	a, b, ok := h.emailRequest(w, r, StageEmailAdded, false)
+	a, b, ok := h.emailRequest(w, r, StageEmailAdded, guardSession)
 	if !ok {
 		return
 	}
@@ -181,7 +219,7 @@ func (h *Auth) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 
 // MakePrimaryEmail: POST /accounts/v1/emails/{id}/primary {"account"}
 func (h *Auth) MakePrimaryEmail(w http.ResponseWriter, r *http.Request) {
-	a, _, ok := h.emailRequest(w, r, StageEmailPrimaryChanged, true)
+	a, _, ok := h.emailRequest(w, r, StageEmailPrimaryChanged, guardHeld)
 	if !ok {
 		return
 	}
@@ -206,7 +244,7 @@ func (h *Auth) MakePrimaryEmail(w http.ResponseWriter, r *http.Request) {
 
 // RemoveEmail: POST /accounts/v1/emails/{id}/remove {"account"}
 func (h *Auth) RemoveEmail(w http.ResponseWriter, r *http.Request) {
-	a, _, ok := h.emailRequest(w, r, StageEmailRemoved, true)
+	a, _, ok := h.emailRequest(w, r, StageEmailRemoved, guardHeld)
 	if !ok {
 		return
 	}
@@ -268,5 +306,6 @@ func (h *Auth) respondEmails(w http.ResponseWriter, r *http.Request, a *account)
 		"emails":       viewEmails(list),
 		"max":          h.cfg.EmailLimit(),
 		"reauth_until": reauthUntil(&a.Session),
+		"held_until":   heldUntil(&a.Session),
 	})
 }

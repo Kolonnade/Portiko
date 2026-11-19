@@ -1,0 +1,40 @@
+{{define "passkey-reauth"}}<script>
+// withReauth runs call, a function returning {status, ok, out}. When the answer
+// is 403 reauthentication_required — the change needs a passkey ceremony in the
+// last few minutes — it signs in again as the account and runs call once more.
+// Signing in again as the account is that ceremony.
+const b64uToBuf = s => Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0));
+const bufToB64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+
+async function reauth(api, email, msg) {
+  msg('Confirm it is you with your passkey…');
+  const r = await fetch(api + '/login/start' + (email ? '?email=' + encodeURIComponent(email) : ''));
+  if (!r.ok) throw new Error('start failed');
+  const options = (await r.json()).publicKey;
+  options.challenge = b64uToBuf(options.challenge);
+  (options.allowCredentials || []).forEach(c => c.id = b64uToBuf(c.id));
+  const cred = await navigator.credentials.get({ publicKey: options });
+  const f = await fetch(api + '/login/finish', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
+      response: {
+        clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+        authenticatorData: bufToB64u(cred.response.authenticatorData),
+        signature: bufToB64u(cred.response.signature),
+        userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null,
+      },
+    }),
+  });
+  if (!f.ok) throw new Error('finish failed');
+}
+
+async function withReauth(call, api, email, msg) {
+  let res = await call();
+  if (res.status === 403 && res.out.error === 'reauthentication_required') {
+    try { await reauth(api, email, msg); } catch (e) { msg('Your passkey was not confirmed, so nothing changed.'); return null; }
+    res = await call();
+  }
+  return res;
+}
+</script>{{end}}

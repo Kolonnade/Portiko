@@ -2,6 +2,7 @@ package passkey
 
 import (
 	"crypto/rand"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -55,6 +56,9 @@ type StoredCredential struct {
 	BackupEligible bool
 	BackupState    bool
 	RPID           string
+	// RestrictedUntil is set on a passkey enrolled through recovery: until then,
+	// signing in with it does not allow taking away the account's other ways in.
+	RestrictedUntil *time.Time
 }
 
 // ToWebAuthn rehydrates a stored row into the shape go-webauthn validates

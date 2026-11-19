@@ -204,7 +204,7 @@ func (s *Service) VerifyCode(ctx context.Context, email, code string) (*Verified
 // Everything after the challenge is consumed happens in one transaction inside
 // the store, so a failure part-way leaves no orphaned user, identifier or
 // credential.
-func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, response *protocol.ParsedCredentialCreationData, caller Caller) (*store.User, []string, error) {
+func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, response *protocol.ParsedCredentialCreationData, caller Caller) (*store.User, *SignIn, error) {
 	// Consume first: a DELETE ... RETURNING makes the challenge single-use, and
 	// doing it before the expensive verification means a replayed attestation
 	// cannot even be attempted twice.
@@ -259,6 +259,8 @@ func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, resp
 			return nil, nil, ErrAuthFailed
 		}
 		rec.UserID = existing.ID
+		hold := time.Now().Add(RecoveryHold).UTC()
+		rec.RestrictedUntil = &hold
 		if err := s.db.Insert(ctx, rec); err != nil {
 			logStep(ctx, "register: inserting recovery credential", err)
 			return nil, nil, ErrAuthFailed
@@ -276,7 +278,7 @@ func (s *Service) FinishRegistration(ctx context.Context, challenge []byte, resp
 		logStep(ctx, "register: deleting pending registration", err)
 	}
 	s.recordEnrollment(ctx, user2, rec, recovered, caller)
-	return user2, AMR(rec.BackupEligible), nil
+	return user2, &SignIn{AMR: AMR(rec.BackupEligible), RestrictedUntil: activeHold(rec.RestrictedUntil)}, nil
 }
 
 // recordEnrollment leaves the trail a passkey enrollment owes the account

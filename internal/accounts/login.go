@@ -74,7 +74,7 @@ func (s *Service) StartLogin(ctx context.Context, email string) (*protocol.Crede
 // The account is resolved by credential ID, which works for both the scoped and
 // the discoverable path — the assertion's rawID identifies the credential
 // regardless of how the ceremony was started.
-func (s *Service) FinishLogin(ctx context.Context, challenge []byte, response *protocol.ParsedCredentialAssertionData) (*store.User, []string, error) {
+func (s *Service) FinishLogin(ctx context.Context, challenge []byte, response *protocol.ParsedCredentialAssertionData) (*store.User, *SignIn, error) {
 	stored, err := s.db.ConsumeChallenge(ctx, challenge, "authentication")
 	if err != nil {
 		logStep(ctx, "login: consuming challenge", err)
@@ -138,5 +138,5 @@ func (s *Service) FinishLogin(ctx context.Context, challenge []byte, response *p
 	if err := s.db.TouchLogin(ctx, user.ID); err != nil {
 		logStep(ctx, "login: touching account", err)
 	}
-	return user, AMR(cred.BackupEligible), nil
+	return user, &SignIn{AMR: AMR(cred.BackupEligible), RestrictedUntil: activeHold(cred.RestrictedUntil)}, nil
 }

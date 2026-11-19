@@ -13,13 +13,13 @@ import (
 
 const credColumns = `id, user_id, credential_id, public_key, user_handle,
 	COALESCE(aaguid::text, ''), sign_count, COALESCE(device_name, ''),
-	backup_eligible, backup_state, rp_id`
+	backup_eligible, backup_state, rp_id, restricted_until`
 
 func scanCredential(row pgx.Row) (*passkey.StoredCredential, error) {
 	var c passkey.StoredCredential
 	var aaguid string
 	if err := row.Scan(&c.ID, &c.UserID, &c.CredentialID, &c.PublicKey, &c.UserHandle,
-		&aaguid, &c.SignCount, &c.DeviceName, &c.BackupEligible, &c.BackupState, &c.RPID); err != nil {
+		&aaguid, &c.SignCount, &c.DeviceName, &c.BackupEligible, &c.BackupState, &c.RPID, &c.RestrictedUntil); err != nil {
 		return nil, norm(err)
 	}
 	c.AAGUID = passkey.ParseAAGUID(aaguid)
@@ -76,10 +76,10 @@ func insertCredentialTx(ctx context.Context, q queryExecer, c passkey.StoredCred
 	_, err := q.Exec(ctx,
 		`INSERT INTO passkey_credentials
 		   (user_id, credential_id, public_key, user_handle, aaguid, sign_count,
-		    device_name, backup_eligible, backup_state, rp_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		    device_name, backup_eligible, backup_state, rp_id, restricted_until)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		c.UserID, c.CredentialID, c.PublicKey, c.UserHandle, aaguid, c.SignCount,
-		nullIfEmpty(c.DeviceName), c.BackupEligible, c.BackupState, c.RPID)
+		nullIfEmpty(c.DeviceName), c.BackupEligible, c.BackupState, c.RPID, c.RestrictedUntil)
 	if err != nil {
 		return fmt.Errorf("store: inserting credential: %w", err)
 	}

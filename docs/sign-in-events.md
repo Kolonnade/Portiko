@@ -40,8 +40,8 @@ A signed-in person's changes to their account's addresses ([emails.md](emails.md
 | Stage | Fires when | Fail reasons |
 |---|---|---|
 | `email_added` | `emails/add` is refused, or `emails/verify` answers | `reauthentication_required`, `invalid_email`, `email_limit_reached`, `login_required`, `bad_request`, `cross_origin`, `rate_limited`, the `code_verified` reasons, `server_error` |
-| `email_removed` | `emails/{id}/remove` answers | `reauthentication_required`, `cannot_remove_primary_email`, `login_required`, `bad_request`, `cross_origin`, `server_error` |
-| `email_primary_changed` | `emails/{id}/primary` answers | `reauthentication_required`, `login_required`, `bad_request`, `cross_origin`, `server_error` |
+| `email_removed` | `emails/{id}/remove` answers | `reauthentication_required`, `recovery_hold`, `cannot_remove_primary_email`, `login_required`, `bad_request`, `cross_origin`, `server_error` |
+| `email_primary_changed` | `emails/{id}/primary` answers | `reauthentication_required`, `recovery_hold`, `login_required`, `bad_request`, `cross_origin`, `server_error` |
 
 Reasons reach only the hook. The client still gets the same generic failure for every cause, so a wrong code and an unknown address remain indistinguishable from outside.
 

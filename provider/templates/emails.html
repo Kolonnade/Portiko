@@ -20,6 +20,7 @@
 </style>
 
 <h1>Your email addresses</h1>
+{{with .HeldUntil}}<p class="muted">You signed in with a passkey added by recovering this account. Until {{.Format "2 January 2006"}}, removing an address or changing the primary needs a passkey you had before.</p>{{end}}
 <p class="muted">Sign-in codes can be sent to any of these, and any of them can recover this account. Every one is told when an address is added or removed, or the primary changes. The primary is the address sites see.</p>
 
 <ul id="list">
@@ -54,13 +55,12 @@
 <p class="msg" id="msg" role="status"></p>
 <p class="muted"><a href="{{.Base}}/u/{{.Account}}/">Back</a></p>
 
+{{template "passkey-reauth"}}
 <script>
 const ACCOUNT = {{.Account}};
 const PRIMARY = {{.Primary}};
 const API = '{{.Base}}/accounts/v1';
 const msg = t => document.getElementById('msg').textContent = t;
-const b64uToBuf = s => Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0));
-const bufToB64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 
 async function post(path, body) {
   const r = await fetch(API + path, {
@@ -70,40 +70,8 @@ async function post(path, body) {
   return { status: r.status, ok: r.ok, out: await r.json().catch(() => ({})) };
 }
 
-// Changing addresses needs a passkey ceremony in the last few minutes. Signing
-// in again as this account is that ceremony.
-async function reauth() {
-  msg('Confirm it is you with your passkey…');
-  const r = await fetch(API + '/login/start?email=' + encodeURIComponent(PRIMARY));
-  if (!r.ok) throw new Error('start failed');
-  const options = (await r.json()).publicKey;
-  options.challenge = b64uToBuf(options.challenge);
-  (options.allowCredentials || []).forEach(c => c.id = b64uToBuf(c.id));
-  const cred = await navigator.credentials.get({ publicKey: options });
-  const f = await fetch(API + '/login/finish', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
-      response: {
-        clientDataJSON: bufToB64u(cred.response.clientDataJSON),
-        authenticatorData: bufToB64u(cred.response.authenticatorData),
-        signature: bufToB64u(cred.response.signature),
-        userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null,
-      },
-    }),
-  });
-  if (!f.ok) throw new Error('finish failed');
-}
-
 // sensitive runs a change, confirming with a passkey first when it is needed.
-async function sensitive(path, body) {
-  let res = await post(path, body);
-  if (res.status === 403 && res.out.error === 'reauthentication_required') {
-    try { await reauth(); } catch (e) { msg('Your passkey was not confirmed, so nothing changed.'); return null; }
-    res = await post(path, body);
-  }
-  return res;
-}
+const sensitive = (path, body) => withReauth(() => post(path, body), API, PRIMARY, msg);
 
 document.getElementById('list').addEventListener('click', async e => {
   const action = e.target.dataset.action;

@@ -123,12 +123,20 @@ func (p *Pages) Passkeys(w http.ResponseWriter, r *http.Request) {
 		p.message(w, http.StatusInternalServerError, "Something went wrong", "Your passkeys could not be loaded. Try again.")
 		return
 	}
+	// The primary address scopes the passkey prompt when removing a passkey
+	// needs a fresh sign-in; without it the prompt offers every passkey.
+	primary, err := p.auth.db.PrimaryEmail(r.Context(), a.UserID)
+	if err != nil {
+		primary = ""
+	}
 	p.render(w, http.StatusOK, "passkeys.html", map[string]any{
 		"ServiceName": p.cfg.ServiceName,
 		"Account":     a.Ordinal,
 		"SID":         a.SID,
 		"Passkeys":    viewPasskeys(keys),
 		"MaxNameLen":  profile.MaxNameLen,
+		"Primary":     primary,
+		"HeldUntil":   heldUntil(&a.Session),
 	})
 }
 
@@ -180,6 +188,7 @@ func (p *Pages) Emails(w http.ResponseWriter, r *http.Request) {
 		"Max":         limit,
 		"CanAdd":      len(emails) < limit,
 		"ReauthUntil": reauthUntil(&a.Session),
+		"HeldUntil":   heldUntil(&a.Session),
 	})
 }
 

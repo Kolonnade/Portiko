@@ -23,6 +23,10 @@ type Session struct {
 	IsDefault       bool
 	AuthenticatedAt time.Time // when the ceremony behind this session happened
 	AMR             []string
+	// RestrictedUntil is set while the passkey behind the session is in its
+	// hold after recovery (migration 000011): until then the session may not
+	// change the primary address, remove an address or revoke a passkey.
+	RestrictedUntil *time.Time
 	CreatedAt       time.Time
 	LastSeenAt      time.Time
 	ExpiresAt       time.Time
@@ -40,11 +44,11 @@ var ErrTooManyAccounts = errors.New("store: too many accounts in this browser")
 // NewBrowserToken returns a fresh cookie value naming a browser.
 func NewBrowserToken() (string, error) { return RandomToken(32) }
 
-const sessionColumns = `user_id, sid, ordinal, is_default, authenticated_at, amr, created_at, last_seen_at, expires_at`
+const sessionColumns = `user_id, sid, ordinal, is_default, authenticated_at, amr, restricted_until, created_at, last_seen_at, expires_at`
 
 func scanSession(row pgx.Row) (*Session, error) {
 	var s Session
-	if err := row.Scan(&s.UserID, &s.SID, &s.Ordinal, &s.IsDefault, &s.AuthenticatedAt, &s.AMR,
+	if err := row.Scan(&s.UserID, &s.SID, &s.Ordinal, &s.IsDefault, &s.AuthenticatedAt, &s.AMR, &s.RestrictedUntil,
 		&s.CreatedAt, &s.LastSeenAt, &s.ExpiresAt); err != nil {
 		return nil, norm(err)
 	}
@@ -58,7 +62,10 @@ func scanSession(row pgx.Row) (*Session, error) {
 // Signing in again as an account the browser already holds keeps its number and
 // refreshes when it authenticated; signing in as a new account adds it with the
 // next number. The first account in a browser is its default.
-func (d *DB) AddSession(ctx context.Context, browserToken string, userID int64, amr []string, userAgent, ip string) (string, *Session, error) {
+//
+// restrictedUntil comes from the passkey the ceremony used (see
+// Session.RestrictedUntil); nil means none.
+func (d *DB) AddSession(ctx context.Context, browserToken string, userID int64, amr []string, restrictedUntil *time.Time, userAgent, ip string) (string, *Session, error) {
 	if browserToken == "" {
 		t, err := NewBrowserToken()
 		if err != nil {
@@ -91,9 +98,10 @@ func (d *DB) AddSession(ctx context.Context, browserToken string, userID int64, 
 	existing, err := scanSession(tx.QueryRow(ctx,
 		`UPDATE sso_sessions
 		    SET authenticated_at = now(), amr = $3, last_seen_at = now(),
-		        expires_at = now() + $4::interval, user_agent = $5, ip = NULLIF($6,'')::inet
+		        expires_at = now() + $4::interval, user_agent = $5, ip = NULLIF($6,'')::inet,
+		        restricted_until = $7
 		  WHERE browser_hash = $1 AND user_id = $2
-		 RETURNING `+sessionColumns, hash, userID, amr, SessionTTL.String(), userAgent, ip))
+		 RETURNING `+sessionColumns, hash, userID, amr, SessionTTL.String(), userAgent, ip, restrictedUntil))
 	if err == nil {
 		return browserToken, existing, tx.Commit(ctx)
 	}
@@ -115,12 +123,12 @@ func (d *DB) AddSession(ctx context.Context, browserToken string, userID int64, 
 	}
 	s, err := scanSession(tx.QueryRow(ctx,
 		`INSERT INTO sso_sessions
-		   (browser_hash, user_id, sid, ordinal, is_default, authenticated_at, amr, user_agent, ip, expires_at)
+		   (browser_hash, user_id, sid, ordinal, is_default, authenticated_at, amr, user_agent, ip, expires_at, restricted_until)
 		 VALUES ($1, $2, $3, $4,
 		         NOT EXISTS (SELECT 1 FROM sso_sessions WHERE browser_hash = $1 AND is_default),
-		         now(), $5, $6, NULLIF($7,'')::inet, now() + $8::interval)
+		         now(), $5, $6, NULLIF($7,'')::inet, now() + $8::interval, $9)
 		 RETURNING `+sessionColumns,
-		hash, userID, sid, next, amr, userAgent, ip, SessionTTL.String()))
+		hash, userID, sid, next, amr, userAgent, ip, SessionTTL.String(), restrictedUntil))
 	if err != nil {
 		return "", nil, fmt.Errorf("store: adding session: %w", err)
 	}

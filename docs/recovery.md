@@ -64,6 +64,7 @@ Whatever gates it — a code, a link, a quorum of trusted people — the ceremon
 - It uses a longer window than enrollment (15 minutes against 5), because it starts from a message read on another device.
 - It is **never gated by whether registration is open.** A closed deployment that gates recovery locks its own users out permanently, and leaves the first administrator unable to enroll at all.
 - On its own it does **not** revoke existing credentials. The legitimate holder may still have a working passkey, and automatic revocation hands an attacker a way to lock them out. The trusted-people transfer is the exception, because revoking is the point of a transfer and the veto window has already run.
+- The credential it enrolls is **held for a week**: a session signed in with it cannot change the primary address, remove an address or revoke a passkey until then. Otherwise whoever reads one backup inbox could strip the holder of every way back in before the notices were read ([emails.md](emails.md#the-recovery-hold)).
 
 ### 6. The operator, for self-hosted deployments
 

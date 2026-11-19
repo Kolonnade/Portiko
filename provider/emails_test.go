@@ -23,6 +23,7 @@ type emailsReply struct {
 	} `json:"emails"`
 	Max         int    `json:"max"`
 	ReauthUntil any    `json:"reauth_until"`
+	HeldUntil   any    `json:"held_until"`
 	Status      string `json:"status"`
 	Error       string `json:"error"`
 }

@@ -39,6 +39,7 @@ deployment can build its own page on them. The template gets:
 | `.Max` | int | The limit, `MAX_EMAILS` |
 | `.CanAdd` | bool | Whether the account is under the limit |
 | `.ReauthUntil` | *time.Time | When the account's last passkey ceremony stops counting for changes, or nil if it already has |
+| `.HeldUntil` | *time.Time | When the session's recovery hold ends, or nil when it has none (see [The recovery hold](#the-recovery-hold)) |
 
 The built-in page also uses the `auth-watch` template, as the other account
 pages do.
@@ -56,19 +57,20 @@ without it). No session is 401 `login_required`.
 | `GET /accounts/v1/emails?account=n` | — | The addresses |
 | `POST /accounts/v1/emails/add` `{"account", "email"}` | yes | Sends a six-digit code to the address. `202 {"status": "code_sent", "account"}` |
 | `POST /accounts/v1/emails/verify` `{"account", "email", "code"}` | — | Adds the address as a backup; answers with the addresses |
-| `POST /accounts/v1/emails/{id}/primary` `{"account"}` | yes | Makes it the primary; answers with the addresses |
-| `POST /accounts/v1/emails/{id}/remove` `{"account"}` | yes | Removes a backup; answers with the addresses |
+| `POST /accounts/v1/emails/{id}/primary` `{"account"}` | yes, not held | Makes it the primary; answers with the addresses |
+| `POST /accounts/v1/emails/{id}/remove` `{"account"}` | yes, not held | Removes a backup; answers with the addresses |
 
 "The addresses" is:
 
 ```json
-{"account": 0, "max": 3, "reauth_until": "2026-11-18T22:10:00Z",
+{"account": 0, "max": 3, "reauth_until": "2026-11-18T22:10:00Z", "held_until": null,
  "emails": [{"id": 12, "email": "a@example.com", "primary": true, "verified_at": "…"},
             {"id": 31, "email": "b@example.com", "primary": false, "verified_at": "…"}]}
 ```
 
 The primary is listed first, then the backups in the order they were added.
 `reauth_until` is `null` when a change would need re-authentication.
+`held_until` is when the session's recovery hold ends, `null` when it has none.
 
 Statuses:
 
@@ -80,6 +82,8 @@ Statuses:
   too many guesses, **or an address that is already on an account**. One answer
   for all of them.
 - `403 reauthentication_required` — see below.
+- `403 recovery_hold` — `primary` or `remove` from a session signed in with a
+  passkey enrolled through recovery, during its hold. See below.
 - `404 not_found` — an `{id}` that does not exist **or belongs to another
   account** (the same answer).
 - `409 cannot_remove_primary_email` — removing the primary. Make another
@@ -110,6 +114,25 @@ again as the same account (`GET login/start?email=<primary>`, then
 `POST login/finish`), which refreshes the session's `authenticated_at`, and
 retries. `verify` needs no fresh ceremony; the code proves the address and the
 `add` before it was already checked.
+
+### The recovery hold
+
+Every address on an account can recover it, so whoever reads any one of them
+can enroll a passkey. Without a hold they could then make their address
+primary, remove the others and revoke the holder's passkeys in a minute, and the
+notices of each step would arrive after the holder had no way back in.
+
+So a passkey enrolled through recovery is held for a week
+(`accounts.RecoveryHold`). A session signed in with it may not change the
+primary, remove an address or revoke a passkey: those answer
+`403 recovery_hold`. Adding an address, the profile and signing in to sites are
+not held. Signing in with a passkey the account had before clears the hold for
+that session, so the holder, warned by the passkey-added notice, can remove
+whatever the recovered passkey added and revoke it straight away.
+
+The hold is recorded on the passkey (`passkey_credentials.restricted_until`) and
+copied to the session at each sign-in. A person who really did lose every
+passkey and recovered waits the week before removing an address or a passkey.
 
 ## Signing in and recovering
 

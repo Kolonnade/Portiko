@@ -121,7 +121,7 @@ func (h *Auth) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		generic(w)
 		return
 	}
-	user, amr, err := h.svc.FinishRegistration(r.Context(),
+	user, signIn, err := h.svc.FinishRegistration(r.Context(),
 		[]byte(response.Response.CollectedClientData.Challenge), response,
 		accounts.Caller{IP: h.clientIP(r), UserAgent: r.UserAgent()})
 	if err != nil {
@@ -129,7 +129,7 @@ func (h *Auth) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		generic(w)
 		return
 	}
-	h.establishSession(w, r, user, amr, StagePasskeyCreateDone)
+	h.establishSession(w, r, user, signIn, StagePasskeyCreateDone)
 }
 
 // StartLogin: GET /accounts/v1/login/start → assertion options.
@@ -152,14 +152,14 @@ func (h *Auth) FinishLogin(w http.ResponseWriter, r *http.Request) {
 		generic(w)
 		return
 	}
-	user, amr, err := h.svc.FinishLogin(r.Context(),
+	user, signIn, err := h.svc.FinishLogin(r.Context(),
 		[]byte(response.Response.CollectedClientData.Challenge), response)
 	if err != nil {
 		h.emit(r, StagePasskeySignInDone, OutcomeFail, "verify_failed")
 		generic(w)
 		return
 	}
-	h.establishSession(w, r, user, amr, StagePasskeySignInDone)
+	h.establishSession(w, r, user, signIn, StagePasskeySignInDone)
 }
 
 // establishSession adds the account that just completed a ceremony to this
@@ -167,8 +167,8 @@ func (h *Auth) FinishLogin(w http.ResponseWriter, r *http.Request) {
 // authorization request with it.
 //
 // stage is the ceremony's finished stage, reported once the outcome is known.
-func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *store.User, amr []string, stage SignInStage) {
-	token, sess, err := h.db.AddSession(r.Context(), browserToken(r), user.ID, amr, r.UserAgent(), h.clientIP(r))
+func (h *Auth) establishSession(w http.ResponseWriter, r *http.Request, user *store.User, signIn *accounts.SignIn, stage SignInStage) {
+	token, sess, err := h.db.AddSession(r.Context(), browserToken(r), user.ID, signIn.AMR, signIn.RestrictedUntil, r.UserAgent(), h.clientIP(r))
 	if errors.Is(err, store.ErrTooManyAccounts) {
 		h.emit(r, stage, OutcomeFail, "too_many_accounts")
 		writeError(w, http.StatusConflict, &kitprotocol.Error{

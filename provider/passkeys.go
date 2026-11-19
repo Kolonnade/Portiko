@@ -182,7 +182,8 @@ func (h *Auth) ListPasskeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, map[string]any{"account": a.Ordinal, "passkeys": viewPasskeys(list)})
+	writeJSON(w, map[string]any{"account": a.Ordinal, "passkeys": viewPasskeys(list),
+		"reauth_until": reauthUntil(&a.Session), "held_until": heldUntil(&a.Session)})
 }
 
 // RenamePasskey: POST /accounts/v1/passkeys/{id}/rename {"account", "name"}
@@ -232,12 +233,19 @@ func (h *Auth) RenamePasskey(w http.ResponseWriter, r *http.Request) {
 
 // RevokePasskey: POST /accounts/v1/passkeys/{id}/revoke {"account"}
 //
-// Refused with 409 when it is the account's last passkey. The response carries
+// Needs a passkey ceremony within ReauthWindow, not with a passkey in its
+// recovery hold (403 reauthentication_required or recovery_hold): a stolen
+// cookie, or a passkey added from someone else's inbox, must not be able to
+// remove the holder's own. Refused with 409 when it is the account's last
+// passkey. The response carries
 // a "signal" for signalAllAcceptedCredentials so the passkey provider drops the
 // credential too.
 func (h *Auth) RevokePasskey(w http.ResponseWriter, r *http.Request) {
 	a, ok := h.passkeyRequest(w, r, new(string))
 	if !ok {
+		return
+	}
+	if refuse(w, a, guardHeld) != "" {
 		return
 	}
 	id, ok := passkeyID(w, r)
@@ -274,7 +282,8 @@ func (h *Auth) respondPasskeys(w http.ResponseWriter, r *http.Request, a *accoun
 		writeError(w, http.StatusInternalServerError, &kitprotocol.Error{Code: kitprotocol.ErrServerError})
 		return
 	}
-	out := map[string]any{"account": a.Ordinal, "passkeys": viewPasskeys(list)}
+	out := map[string]any{"account": a.Ordinal, "passkeys": viewPasskeys(list),
+		"reauth_until": reauthUntil(&a.Session), "held_until": heldUntil(&a.Session)}
 	if sig != nil {
 		out["signal"] = sig
 	}

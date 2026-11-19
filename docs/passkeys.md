@@ -37,6 +37,13 @@ The two POSTs need `Content-Type: application/json` and a request from the
 provider's own origin (`Origin`, or `Referer`), as the profile and sign-in
 endpoints do. No session is 401 `login_required`.
 
+Revoke also needs a passkey ceremony within the last ten minutes
+(`provider.ReauthWindow`), so a stolen session cookie cannot remove the holder's
+way back in: `403 reauthentication_required`, which the page answers by signing
+in again and retrying, as the email page does. A session signed in with a
+passkey enrolled through recovery cannot revoke for a week:
+`403 recovery_hold` ([emails.md](emails.md#the-recovery-hold)).
+
 Statuses: `400` for a bad name, `404 not_found` for a passkey that does not
 exist **or belongs to another account** (the same answer, so an id never
 reveals itself), and `409 cannot_revoke_last_passkey` when it is the account's
