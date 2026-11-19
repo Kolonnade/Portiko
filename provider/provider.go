@@ -110,10 +110,17 @@ func New(ctx context.Context, cfg *Config, opts Options) (*Provider, error) {
 	if m == nil {
 		m = &mailer.Stdout{ServiceName: cfg.ServiceName}
 		if cfg.SMTPHost != "" {
+			// A deployment's own wording, from mail-*.txt in TEMPLATE_DIR.
+			var tmpl *mailer.Templates
+			if cfg.TemplateDir != "" {
+				if tmpl, err = mailer.LoadTemplates(cfg.TemplateDir); err != nil {
+					return fail(err)
+				}
+			}
 			m = &mailer.SMTP{
 				Host: cfg.SMTPHost, Port: cfg.SMTPPort,
 				Username: cfg.SMTPUsername, Password: cfg.SMTPPassword,
-				From: cfg.EmailFrom, ServiceName: cfg.ServiceName,
+				From: cfg.EmailFrom, ServiceName: cfg.ServiceName, Templates: tmpl,
 			}
 		}
 	}

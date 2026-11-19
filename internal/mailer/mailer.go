@@ -154,9 +154,25 @@ func (t *TestDomains) match(to string) bool {
 type SMTP struct {
 	Host, Username, Password, From, ServiceName string
 	Port                                        int
+	// Templates, when set, replace the built-in wording of the messages they
+	// cover. See LoadTemplates.
+	Templates *Templates
+}
+
+// custom sends name from the deployment's templates. ok is false when there is
+// no such template and the built-in text should be used.
+func (m *SMTP) custom(to, name string, data any) (ok bool, err error) {
+	subject, body, ok, err := m.Templates.render(name, data)
+	if !ok || err != nil {
+		return ok, err
+	}
+	return true, m.send(to, subject, body)
 }
 
 func (m *SMTP) SendCode(to, code string) error {
+	if ok, err := m.custom(to, TemplateCode, CodeData{ServiceName: m.ServiceName, Code: code}); ok {
+		return err
+	}
 	return m.send(to, fmt.Sprintf("Your %s sign-in code", m.ServiceName), fmt.Sprintf(""+
 		"Your sign-in code is %s\r\n\r\n"+
 		"It expires in 10 minutes. If you didn't ask for it, you can ignore this.\r\n",
@@ -169,6 +185,9 @@ func (m *SMTP) SendCode(to, code string) error {
 // for no click to confirm. A security notice with an action link in it is a
 // phishing template; the only link here is the account itself.
 func (m *SMTP) SendPasskeyAdded(to string, n PasskeyNotice) error {
+	if ok, err := m.custom(to, TemplatePasskeyAdded, PasskeyAddedData{ServiceName: m.ServiceName, PasskeyNotice: n}); ok {
+		return err
+	}
 	what := "A new passkey"
 	if n.Authenticator != "" {
 		what = "A new passkey in " + n.Authenticator
@@ -189,6 +208,9 @@ func (m *SMTP) SendPasskeyAdded(to string, n PasskeyNotice) error {
 // Like the passkey notice, it says what happened and asks for no click: the
 // only link is the account itself, where the holder signs in to look.
 func (m *SMTP) SendEmailChanged(to string, n EmailNotice) error {
+	if ok, err := m.custom(to, TemplateEmailChanged, EmailChangedData{ServiceName: m.ServiceName, EmailNotice: n}); ok {
+		return err
+	}
 	var what, subject string
 	switch n.Change {
 	case EmailAdded:

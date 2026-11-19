@@ -58,8 +58,9 @@ type Config struct {
 	SMTPPassword string
 	EmailFrom    string
 
-	// TemplateDir optionally overrides the built-in sign-in page templates, so a
-	// second deployment can be rebranded without a fork.
+	// TemplateDir optionally overrides the built-in page templates (*.html) and,
+	// with the built-in SMTP sender, the mail text (mail-*.txt), so a second
+	// deployment can be rebranded without a fork.
 	TemplateDir string
 
 	// BootstrapCode closes registration. When set, creating a NEW account needs

@@ -135,6 +135,36 @@ with the same pattern ([test-mail.md](test-mail.md)).
 `SendEmailChanged` is a required method of `provider.Mailer`. A custom mailer
 must add it.
 
+### Your own wording
+
+With the built-in SMTP sender, a deployment can replace the text of any message
+by putting a `text/template` in its `TEMPLATE_DIR`:
+
+| File | Message | Data |
+|---|---|---|
+| `mail-code.txt` | A one-time code (sign-in, recovery, or confirming a new address) | `.ServiceName`, `.Code` |
+| `mail-passkey-added.txt` | A passkey added to an existing account | `.ServiceName`, `.When`, `.Authenticator`, `.ReviewURL` |
+| `mail-email-changed.txt` | An address added or removed, or the primary changed | `.ServiceName`, `.When`, `.Change` (`added`, `removed`, `primary_changed`), `.Address`, `.Previous`, `.ReviewURL` |
+
+Each template's output is a `Subject: …` line, a blank line, then the body:
+
+```
+Subject: The addresses on your {{.ServiceName}} account changed
+
+{{if eq .Change "added"}}{{.Address}} can now sign in to your account.
+{{else if eq .Change "removed"}}{{.Address}} can no longer sign in to your account.
+{{else}}{{.Address}} is now your main address.{{end}}
+
+If this wasn't you, sign in and check your account: {{.ReviewURL}}
+```
+
+A message without its file keeps the built-in text. Every file is executed with
+sample data at start-up, so an unknown field, a missing subject, or a
+`mail-*.txt` that is not one of the three stops the provider from starting
+rather than failing someone's sign-in. Keep the notice free of any link that
+undoes the change. A deployment with its own `provider.Mailer` writes its own
+text and ignores these files.
+
 ## Claims
 
 `email` is always the primary, with `email_verified: true`, in all three places
