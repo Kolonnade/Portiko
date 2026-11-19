@@ -77,11 +77,11 @@ type Client struct {
 }
 
 const (
-	flowCookie   = "portiko_rp_flow"
+	flowCookie = "portiko_rp_flow"
 	// flowTTL is how long a sign-in may take, from leaving the site to coming
 	// back. It matches the provider's longest authorization request
 	// (store.AuthRequestMaxLife): a first sign-up includes reading an email.
-	flowTTL = 2 * time.Hour
+	flowTTL      = 2 * time.Hour
 	leeway       = 30 * time.Second
 	sessionTTL   = 30 * 24 * time.Hour
 	fetchTimeout = 10 * time.Second
