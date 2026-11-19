@@ -114,11 +114,24 @@ type Config struct {
 	// off for everyone. The per-address code-guess budget still applies.
 	RateLimitExempt []netip.Prefix
 
+	// MaxEmails is how many verified email addresses one account may hold, the
+	// primary included. Zero means DefaultMaxEmails.
+	MaxEmails int
+
 	base    string // BasePath, validated by Load
 	baseSet bool
 }
 
 const defaultPort = 8090
+
+// DefaultMaxEmails is the number of addresses an account may hold when
+// MAX_EMAILS is not set: the primary and two backups.
+const DefaultMaxEmails = 3
+
+// maxMaxEmails bounds MAX_EMAILS. Every address on an account can recover it,
+// and every one is sent each security notice; a long list is a long list of
+// ways in.
+const maxMaxEmails = 10
 
 const minBootstrapCode = 16
 
@@ -258,6 +271,15 @@ func Load() (*Config, error) {
 		}
 	}
 
+	if v := os.Getenv("MAX_EMAILS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxMaxEmails {
+			problems = append(problems, fmt.Sprintf("MAX_EMAILS must be an integer from 1 to %d", maxMaxEmails))
+		} else {
+			c.MaxEmails = n
+		}
+	}
+
 	for _, o := range strings.Split(os.Getenv("WEBAUTHN_RP_ORIGINS"), ",") {
 		if o = strings.TrimSpace(o); o != "" {
 			c.WebAuthnRPOrigins = append(c.WebAuthnRPOrigins, o)
@@ -374,6 +396,14 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// EmailLimit is how many addresses one account may hold.
+func (c *Config) EmailLimit() int {
+	if c.MaxEmails <= 0 {
+		return DefaultMaxEmails
+	}
+	return c.MaxEmails
 }
 
 // CheckRateLimitExempt refuses an exemption that covers a whole address

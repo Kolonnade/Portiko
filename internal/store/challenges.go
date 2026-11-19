@@ -59,6 +59,11 @@ func (d *DB) SweepExpired(ctx context.Context) (int64, error) {
 		return n, err
 	}
 	n += tag3.RowsAffected()
+	tag4, err := d.pool.Exec(ctx, `DELETE FROM pending_emails WHERE expires_at < now()`)
+	if err != nil {
+		return n, err
+	}
+	n += tag4.RowsAffected()
 	counters, err := d.sweepRateCounters(ctx)
 	if err != nil {
 		return n, err

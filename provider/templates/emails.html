@@ -1,0 +1,154 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emails — {{.ServiceName}}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  ul { list-style: none; padding: 0; }
+  li { border: 1px solid currentColor; border-radius: .4rem; padding: .7rem; margin: .75rem 0; }
+  .title { font-weight: 600; overflow-wrap: anywhere; }
+  .muted { opacity: .7; font-size: .9rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
+  input, button { font: inherit; padding: .4rem .6rem; border-radius: .4rem; border: 1px solid currentColor; }
+  input { flex: 1; min-width: 8rem; background: none; color: inherit; }
+  button { cursor: pointer; background: none; color: inherit; }
+  .msg { min-height: 1.5rem; }
+  [hidden] { display: none !important; }
+</style>
+
+<h1>Your email addresses</h1>
+<p class="muted">Sign-in codes can be sent to any of these, and any of them can recover this account. Every one is told when an address is added or removed, or the primary changes. The primary is the address sites see.</p>
+
+<ul id="list">
+  {{range .Emails}}
+  <li data-id="{{.ID}}">
+    <div class="title">{{.Email}}</div>
+    <div class="muted">{{if .Primary}}Primary · {{end}}added <time datetime="{{.VerifiedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.VerifiedAt.Format "2 Jan 2006"}}</time></div>
+    {{if not .Primary}}
+    <div class="actions">
+      <button type="button" data-action="primary">Make primary</button>
+      <button type="button" data-action="remove">Remove</button>
+    </div>
+    {{end}}
+  </li>
+  {{end}}
+</ul>
+
+{{if .CanAdd}}
+<h2>Add a backup address</h2>
+<form class="actions" id="addForm">
+  <input type="email" id="email" autocomplete="email" placeholder="name@example.com" aria-label="Email address" required>
+  <button type="submit">Send code</button>
+</form>
+<form class="actions" id="codeForm" hidden>
+  <input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code" aria-label="Code" required>
+  <button type="submit">Add address</button>
+</form>
+{{else}}
+<p class="muted">This account has {{.Max}} addresses, the most it can hold. Remove one to add another.</p>
+{{end}}
+
+<p class="msg" id="msg" role="status"></p>
+<p class="muted"><a href="{{.Base}}/u/{{.Account}}/">Back</a></p>
+
+<script>
+const ACCOUNT = {{.Account}};
+const PRIMARY = {{.Primary}};
+const API = '{{.Base}}/accounts/v1';
+const msg = t => document.getElementById('msg').textContent = t;
+const b64uToBuf = s => Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0));
+const bufToB64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+
+async function post(path, body) {
+  const r = await fetch(API + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account: ACCOUNT, ...body }),
+  });
+  return { status: r.status, ok: r.ok, out: await r.json().catch(() => ({})) };
+}
+
+// Changing addresses needs a passkey ceremony in the last few minutes. Signing
+// in again as this account is that ceremony.
+async function reauth() {
+  msg('Confirm it is you with your passkey…');
+  const r = await fetch(API + '/login/start?email=' + encodeURIComponent(PRIMARY));
+  if (!r.ok) throw new Error('start failed');
+  const options = (await r.json()).publicKey;
+  options.challenge = b64uToBuf(options.challenge);
+  (options.allowCredentials || []).forEach(c => c.id = b64uToBuf(c.id));
+  const cred = await navigator.credentials.get({ publicKey: options });
+  const f = await fetch(API + '/login/finish', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: cred.id, rawId: bufToB64u(cred.rawId), type: cred.type,
+      response: {
+        clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+        authenticatorData: bufToB64u(cred.response.authenticatorData),
+        signature: bufToB64u(cred.response.signature),
+        userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null,
+      },
+    }),
+  });
+  if (!f.ok) throw new Error('finish failed');
+}
+
+// sensitive runs a change, confirming with a passkey first when it is needed.
+async function sensitive(path, body) {
+  let res = await post(path, body);
+  if (res.status === 403 && res.out.error === 'reauthentication_required') {
+    try { await reauth(); } catch (e) { msg('Your passkey was not confirmed, so nothing changed.'); return null; }
+    res = await post(path, body);
+  }
+  return res;
+}
+
+document.getElementById('list').addEventListener('click', async e => {
+  const action = e.target.dataset.action;
+  if (!action) return;
+  const li = e.target.closest('li[data-id]');
+  if (action === 'remove' && !confirm('Remove this address? It will no longer receive sign-in codes or be able to recover this account.')) return;
+  msg(action === 'remove' ? 'Removing…' : 'Saving…');
+  const res = await sensitive('/emails/' + li.dataset.id + '/' + action, {});
+  if (!res) return;
+  if (!res.ok) { msg(res.out.error_description || 'That did not work.'); return; }
+  location.reload();
+});
+
+const addForm = document.getElementById('addForm');
+if (addForm) {
+  addForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const email = document.getElementById('email').value.trim();
+    msg('Sending…');
+    const res = await sensitive('/emails/add', { email });
+    if (!res) return;
+    if (!res.ok) { msg(res.out.error_description || 'That did not work.'); return; }
+    // The same words whether or not the address is already on an account.
+    msg('If that address can receive mail and is not already on an account, a code is on its way.');
+    document.getElementById('codeForm').hidden = false;
+    document.getElementById('code').focus();
+  });
+  document.getElementById('codeForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    msg('Checking…');
+    const res = await post('/emails/verify', {
+      email: document.getElementById('email').value.trim(),
+      code: document.getElementById('code').value.trim(),
+    });
+    if (!res.ok) { msg(res.out.error_description || 'That code did not work.'); return; }
+    location.reload();
+  });
+}
+</script>
+
+{{template "auth-watch" .}}
+<script>
+watchAuth({
+  account: ACCOUNT,
+  signedOut: () => location.replace('{{.Base}}/'),
+  signedIn: (s) => { if (s.sid !== {{.SID}}) location.reload(); },
+});
+</script>

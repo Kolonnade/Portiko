@@ -35,6 +35,14 @@ The hook runs synchronously on the request goroutine, so a slow hook slows sign-
 | `passkey_signin_finished` | `login/finish` answers, or the page reports the dialog failed | as for `passkey_create_finished`, plus `rate_limited` |
 | `redirected` | the person is sent back to a site | `account_mismatch`, `complete_failed`, or the OpenID Connect error (`login_required`, `access_denied`, …) |
 
+A signed-in person's changes to their account's addresses ([emails.md](emails.md)) are reported too. They carry no flow or client.
+
+| Stage | Fires when | Fail reasons |
+|---|---|---|
+| `email_added` | `emails/add` is refused, or `emails/verify` answers | `reauthentication_required`, `invalid_email`, `email_limit_reached`, `login_required`, `bad_request`, `cross_origin`, `rate_limited`, the `code_verified` reasons, `server_error` |
+| `email_removed` | `emails/{id}/remove` answers | `reauthentication_required`, `cannot_remove_primary_email`, `login_required`, `bad_request`, `cross_origin`, `server_error` |
+| `email_primary_changed` | `emails/{id}/primary` answers | `reauthentication_required`, `login_required`, `bad_request`, `cross_origin`, `server_error` |
+
 Reasons reach only the hook. The client still gets the same generic failure for every cause, so a wrong code and an unknown address remain indistinguishable from outside.
 
 Portiko's sign-in asks for no name, so there is no name stage. Abandonment is never reported by the server: infer it from an attempt whose later stages never arrive. The one exception is a passkey dialog, which only the browser sees; a `NotAllowedError` or `AbortError` is reported as `abandon`, any other error as `fail`.

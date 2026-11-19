@@ -12,9 +12,10 @@ import (
 	"time"
 )
 
-// Mailer sends the two messages the provider owes an account holder: the
-// one-time code that starts a ceremony, and the notice that a passkey was added
-// to an account that already existed.
+// Mailer sends the messages the provider owes an account holder: the one-time
+// code that starts a ceremony or confirms an address, the notice that a passkey
+// was added to an account that already existed, and the notice that the
+// account's addresses changed.
 //
 // The notice is a required method rather than an optional extra. Email is the
 // root of trust for recovery — proving you can read the inbox is enough to
@@ -25,6 +26,37 @@ import (
 type Mailer interface {
 	SendCode(to, code string) error
 	SendPasskeyAdded(to string, n PasskeyNotice) error
+	SendEmailChanged(to string, n EmailNotice) error
+}
+
+// EmailChange names what happened to an account's addresses.
+type EmailChange string
+
+const (
+	// EmailAdded: Address was added to the account as a backup.
+	EmailAdded EmailChange = "added"
+	// EmailRemoved: Address was taken off the account.
+	EmailRemoved EmailChange = "removed"
+	// EmailPrimaryChanged: Address became the account's primary; Previous was.
+	EmailPrimaryChanged EmailChange = "primary_changed"
+)
+
+// EmailNotice describes a change to an account's addresses. It is sent to every
+// address on the account, and to the one removed, so a change made by somebody
+// else reaches an inbox the holder still reads.
+type EmailNotice struct {
+	// When the change was made.
+	When time.Time
+	// Change is what happened.
+	Change EmailChange
+	// Address is the address added, removed or made primary.
+	Address string
+	// Previous is the address that was primary, for EmailPrimaryChanged.
+	Previous string
+	// ReviewURL is where the holder can see the account's addresses. The
+	// notice offers no link that undoes the change: that would be a phishing
+	// template.
+	ReviewURL string
 }
 
 // PasskeyNotice describes a passkey that has just been added to an account that
@@ -60,6 +92,12 @@ func (s *Stdout) SendPasskeyAdded(to string, n PasskeyNotice) error {
 	return nil
 }
 
+func (s *Stdout) SendEmailChanged(to string, n EmailNotice) error {
+	slog.Warn("email not configured; printing the address-change notice instead",
+		"to", to, "change", string(n.Change), "address", n.Address, "when", n.When, "review", n.ReviewURL)
+	return nil
+}
+
 // TestDomains writes messages for a few test domains to the log and passes
 // every other message to Next.
 //
@@ -87,6 +125,15 @@ func (t *TestDomains) SendPasskeyAdded(to string, n PasskeyNotice) error {
 		return nil
 	}
 	return t.Next.SendPasskeyAdded(to, n)
+}
+
+func (t *TestDomains) SendEmailChanged(to string, n EmailNotice) error {
+	if t.match(to) {
+		slog.Warn("test mail domain; not sending, logging instead",
+			"to", to, "change", string(n.Change), "address", n.Address, "when", n.When, "review", n.ReviewURL)
+		return nil
+	}
+	return t.Next.SendEmailChanged(to, n)
 }
 
 func (t *TestDomains) match(to string) bool {
@@ -135,6 +182,38 @@ func (m *SMTP) SendPasskeyAdded(to string, n PasskeyNotice) error {
 		"  %s\r\n",
 		what, m.ServiceName, n.When.UTC().Format("2 January 2006 at 15:04 UTC"), n.ReviewURL)
 	return m.send(to, "A new passkey was added to your "+m.ServiceName+" account", body)
+}
+
+// SendEmailChanged tells the holder that the account's addresses changed.
+//
+// Like the passkey notice, it says what happened and asks for no click: the
+// only link is the account itself, where the holder signs in to look.
+func (m *SMTP) SendEmailChanged(to string, n EmailNotice) error {
+	var what, subject string
+	switch n.Change {
+	case EmailAdded:
+		what = fmt.Sprintf("%s was added to your %s account as a backup address. It can\r\n"+
+			"now receive sign-in codes and recover the account.", n.Address, m.ServiceName)
+		subject = "An email address was added to your " + m.ServiceName + " account"
+	case EmailRemoved:
+		what = fmt.Sprintf("%s was removed from your %s account. It can no longer\r\n"+
+			"receive sign-in codes for it or recover it.", n.Address, m.ServiceName)
+		subject = "An email address was removed from your " + m.ServiceName + " account"
+	default:
+		what = fmt.Sprintf("%s is now the primary email address of your %s account.", n.Address, m.ServiceName)
+		if n.Previous != "" {
+			what += fmt.Sprintf("\r\nBefore, it was %s.", n.Previous)
+		}
+		subject = "The primary email address of your " + m.ServiceName + " account changed"
+	}
+	body := fmt.Sprintf(""+
+		"%s\r\n\r\n"+
+		"This happened on %s. If you made this change, there is nothing to do.\r\n\r\n"+
+		"If you did not, sign in and review the addresses and passkeys on your\r\n"+
+		"account:\r\n\r\n"+
+		"  %s\r\n",
+		what, n.When.UTC().Format("2 January 2006 at 15:04 UTC"), n.ReviewURL)
+	return m.send(to, subject, body)
 }
 
 // send writes one message. Headers live here rather than in each caller so a new

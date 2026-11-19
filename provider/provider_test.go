@@ -169,9 +169,28 @@ func newHarnessAt(t *testing.T, prefix string) *harness {
 var _ provider.Mailer = (*fakeMailer)(nil)
 
 type fakeMailer struct {
-	mu    sync.Mutex
-	codes []string
-	sent  []sentNotice
+	mu      sync.Mutex
+	codes   []string
+	sent    []sentNotice
+	changes []sentChange
+}
+
+type sentChange struct {
+	to     string
+	notice provider.EmailNotice
+}
+
+func (m *fakeMailer) SendEmailChanged(to string, n provider.EmailNotice) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.changes = append(m.changes, sentChange{to: to, notice: n})
+	return nil
+}
+
+func (m *fakeMailer) emailChanges() []sentChange {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]sentChange(nil), m.changes...)
 }
 
 type sentNotice struct {

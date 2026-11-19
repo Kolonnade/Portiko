@@ -287,6 +287,7 @@ func (m *codeMailer) SendCode(to, code string) error {
 }
 
 func (m *codeMailer) SendPasskeyAdded(string, provider.PasskeyNotice) error { return nil }
+func (m *codeMailer) SendEmailChanged(string, provider.EmailNotice) error   { return nil }
 
 func (m *codeMailer) code(to string) (string, bool) {
 	m.mu.Lock()

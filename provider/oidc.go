@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -145,12 +146,27 @@ func (s *storage) DeleteAuthRequest(ctx context.Context, id string) error {
 
 // ----------------------------------------------------------------- tokens
 
-func (s *storage) CreateAccessToken(ctx context.Context, _ op.TokenRequest) (string, time.Time, error) {
-	return uuid.NewString(), time.Now().Add(AccessTokenTTL), nil
+func (s *storage) CreateAccessToken(ctx context.Context, request op.TokenRequest) (string, time.Time, error) {
+	return accessTokenID(request.GetScopes()), time.Now().Add(AccessTokenTTL), nil
+}
+
+// emailGrantSuffix marks an access token whose grant included the email scope.
+const emailGrantSuffix = ".email"
+
+// accessTokenID mints an access token's jti. It records whether email was
+// granted, because the userinfo endpoint is handed only the jti and the subject
+// of the (signed, verified) token, not its scopes, and must not return the
+// address to a site that was not granted it.
+func accessTokenID(scopes []string) string {
+	id := uuid.NewString()
+	if slices.Contains(scopes, oidc.ScopeEmail) {
+		id += emailGrantSuffix
+	}
+	return id
 }
 
 func (s *storage) CreateAccessAndRefreshTokens(ctx context.Context, request op.TokenRequest, current string) (string, string, time.Time, error) {
-	id, exp := uuid.NewString(), time.Now().Add(AccessTokenTTL)
+	id, exp := accessTokenID(request.GetScopes()), time.Now().Add(AccessTokenTTL)
 	switch r := request.(type) {
 	case *authRequest:
 		if r.UserID == nil {
@@ -238,15 +254,38 @@ func (s *storage) SetUserinfoFromScopes(ctx context.Context, info *oidc.UserInfo
 	return s.fillUserinfo(ctx, info, subject, scopes)
 }
 
+// SetUserinfoFromRequest fills the ID token. Besides the session, it carries
+// the primary email when email was granted: zitadel/oidc drops the userinfo
+// scopes from an ID token issued alongside an access token, and a site reading
+// the address from the ID token must see the current primary at each sign-in.
+// Profile claims stay out of the ID token, as before.
 func (s *storage) SetUserinfoFromRequest(ctx context.Context, info *oidc.UserInfo, request op.IDTokenRequest, _ []string) error {
 	if sid := sidOf(request); sid != "" {
 		info.AppendClaims(protocol.ClaimSessionID, sid)
 	}
+	if slices.Contains(request.GetScopes(), oidc.ScopeEmail) {
+		claims, err := s.claimsFor(ctx, request.GetSubject(), []string{oidc.ScopeEmail})
+		if err != nil {
+			return err
+		}
+		if email, ok := claims[protocol.ClaimEmail].(string); ok {
+			info.Email = email
+			info.EmailVerified = oidc.Bool(true)
+		}
+	}
 	return nil
 }
 
-func (s *storage) SetUserinfoFromToken(ctx context.Context, info *oidc.UserInfo, _, subject, _ string) error {
-	return s.fillUserinfo(ctx, info, subject, []string{oidc.ScopeOpenID, oidc.ScopeProfile})
+// SetUserinfoFromToken fills the userinfo response. Profile claims are always
+// included, as they always have been; email only when the token's grant
+// included it (see accessTokenID). The address is read now, so it is the
+// current primary.
+func (s *storage) SetUserinfoFromToken(ctx context.Context, info *oidc.UserInfo, tokenID, subject, _ string) error {
+	scopes := []string{oidc.ScopeOpenID, oidc.ScopeProfile}
+	if strings.HasSuffix(tokenID, emailGrantSuffix) {
+		scopes = append(scopes, oidc.ScopeEmail)
+	}
+	return s.fillUserinfo(ctx, info, subject, scopes)
 }
 
 func (s *storage) SetIntrospectionFromToken(ctx context.Context, resp *oidc.IntrospectionResponse, _, subject, clientID string) error {

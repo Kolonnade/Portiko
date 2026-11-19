@@ -8,7 +8,12 @@ import (
 	"time"
 )
 
-type recorder struct{ codes, notices []string }
+type recorder struct{ codes, notices, changes []string }
+
+func (r *recorder) SendEmailChanged(to string, n EmailNotice) error {
+	r.changes = append(r.changes, to)
+	return nil
+}
 
 func (r *recorder) SendCode(to, code string) error { r.codes = append(r.codes, to); return nil }
 func (r *recorder) SendPasskeyAdded(to string, n PasskeyNotice) error {
@@ -72,6 +77,25 @@ func TestTestDomainsPasskeyNotice(t *testing.T) {
 		t.Errorf("forwarded %v", next.notices)
 	}
 	if !strings.Contains(buf.String(), "to=a@example.test") {
+		t.Errorf("log missing notice: %q", buf.String())
+	}
+}
+
+func TestTestDomainsEmailNotice(t *testing.T) {
+	buf := captureLog(t)
+	next := &recorder{}
+	m := &TestDomains{Domains: []string{"example.test"}, Next: next}
+	n := EmailNotice{When: time.Now(), Change: EmailAdded, Address: "b@example.test", ReviewURL: "https://id.example.test/emails"}
+	if err := m.SendEmailChanged("a@example.test", n); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SendEmailChanged("a@gmail.com", n); err != nil {
+		t.Fatal(err)
+	}
+	if len(next.changes) != 1 || next.changes[0] != "a@gmail.com" {
+		t.Errorf("forwarded %v", next.changes)
+	}
+	if !strings.Contains(buf.String(), "to=a@example.test") || !strings.Contains(buf.String(), "change=added") {
 		t.Errorf("log missing notice: %q", buf.String())
 	}
 }

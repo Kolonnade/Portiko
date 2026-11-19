@@ -13,6 +13,8 @@ all, not a capacity measure.
 | `GET /accounts/v1/login/start` | 60 / hour | 120 / hour |
 | `POST /accounts/v1/login/finish` | — | 120 / hour |
 | `POST /oauth/token` | — | 3600 / hour |
+| `POST /accounts/v1/emails/add` — add an address | 5 / hour | 30 / hour |
+| `POST /accounts/v1/emails/verify` | the guess budget below | 60 / hour |
 
 Plus the one that matters most:
 

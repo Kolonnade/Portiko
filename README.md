@@ -33,6 +33,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Recovery](docs/recovery.md) — losing a passkey, an email, or both: the ladder and the rules every path follows
 - [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
 - [Conformance runs](docs/conformance.md) — the release gate: which OpenID plans, where they run, and the harness that signs the suite in with a virtual passkey
+- [Email addresses](docs/emails.md) — backup addresses: adding one, making it primary, removing one, and the `MAX_EMAILS` limit
 - [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
 - [Test mail domains](docs/test-mail.md) — the `TEST_MAIL_DOMAINS` setting, which writes sign-in codes for reserved test domains to the log so an end-to-end test can sign up
 - [Serving under a path](docs/path-prefix.md) — an `ISSUER` with a path (`https://host/id`), how to mount `Handler()`, and the cookie that results

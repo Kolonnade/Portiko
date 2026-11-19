@@ -132,6 +132,57 @@ func (p *Pages) Passkeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// EmailsRedirect: GET /emails — sites, and the address-change notices, link
+// here without knowing numbers.
+func (p *Pages) EmailsRedirect(w http.ResponseWriter, r *http.Request) {
+	a := defaultAccount(p.auth.accounts(r))
+	if a == nil {
+		http.Redirect(w, r, p.cfg.BasePath()+"/signin?return_to="+url.QueryEscape(p.cfg.BasePath()+"/emails"), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, p.cfg.BasePath()+"/u/"+strconv.Itoa(a.Ordinal)+"/emails", http.StatusFound)
+}
+
+// Emails: GET /u/{n}/emails — list, add, make primary and remove the account's
+// addresses. docs/emails.md lists the template data.
+func (p *Pages) Emails(w http.ResponseWriter, r *http.Request) {
+	list := p.auth.accounts(r)
+	a, ok := selectAccount(list, r.PathValue("n"))
+	if !ok {
+		p.stale(w, r, list)
+		return
+	}
+	// A TEMPLATE_DIR written before this page existed has no emails.html. The
+	// endpoints still work; only the built-in page is missing.
+	if p.tmpl.Lookup("emails.html") == nil {
+		p.message(w, http.StatusNotFound, "Not available", "This page is not part of this site.")
+		return
+	}
+	emails, err := p.auth.db.Emails(r.Context(), a.UserID)
+	if err != nil {
+		slog.Error("emails: listing", "err", err)
+		p.message(w, http.StatusInternalServerError, "Something went wrong", "Your email addresses could not be loaded. Try again.")
+		return
+	}
+	primary := ""
+	for _, e := range emails {
+		if e.Primary {
+			primary = e.Address
+		}
+	}
+	limit := p.cfg.EmailLimit()
+	p.render(w, http.StatusOK, "emails.html", map[string]any{
+		"ServiceName": p.cfg.ServiceName,
+		"Account":     a.Ordinal,
+		"SID":         a.SID,
+		"Emails":      viewEmails(emails),
+		"Primary":     primary,
+		"Max":         limit,
+		"CanAdd":      len(emails) < limit,
+		"ReauthUntil": reauthUntil(&a.Session),
+	})
+}
+
 // site is one first-party site linked from the home page.
 type site struct{ Name, URL, Host string }
 

@@ -160,21 +160,14 @@ more than certifying the default configuration.
 | C | Rewrite "What a pass means" in conformance.md, and change how the run continues after failures. Then rerun. |
 | D | Nothing more. The VM is already deleted. |
 
-## A second issue the rerun will probably show
+## A second issue, since fixed
 
-`SetUserinfoFromToken` (`provider/oidc.go:248`) always fills userinfo as if
-only `openid` and `profile` were granted. As a result:
-
-- The `email` scope's claims are never returned from userinfo, even when
-  granted.
-- The Go harness test observed this: userinfo returned only `sub` and
-  `updated_at`.
-- `email` is also absent from the ID token.
-
-`oidcc-scope-email` (and probably `oidcc-scope-all`) should fail on it. This
-was found by reading the code; no conformance run has reached it yet. The fix
-is to fill userinfo from the token's granted scopes. It is a separate decision
-from PKCE.
+Userinfo used to be filled as if only `openid` and `profile` were granted, and
+the ID token never carried `email`, so `oidcc-scope-email` would have failed.
+Both now carry the primary address when `email` is granted (see
+[emails.md](emails.md#claims)). Userinfo still always includes the profile
+claims, as before; `oidcc-scope-profile` and `oidcc-scope-all` have not been
+checked against that.
 
 ## Also needs a person regardless
 

@@ -26,7 +26,7 @@ Offline, unphishable, no new channel to attack, and no dependency on a mail prov
 
 ### 3. A verified identifier
 
-Any **verified** email or phone on the account can start the recovery ceremony. Several identifiers are better than one: the second email is what saves most people in practice.
+Any **verified** email or phone on the account can start the recovery ceremony. Several identifiers are better than one: the second email is what saves most people in practice. An account can hold up to `MAX_EMAILS` addresses ([emails.md](emails.md)).
 
 A phone is a factor, not a door. Recovery that can be completed by SMS alone is recovery by SIM swap, so a phone should either be paired with something else or limited to lower-risk steps.
 

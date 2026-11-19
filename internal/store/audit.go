@@ -18,6 +18,13 @@ const (
 	AuditCredentialRenamed = "credential.renamed"
 	// AuditCredentialRevoked records a passkey removed by its holder.
 	AuditCredentialRevoked = "credential.revoked"
+	// AuditEmailAdded records an address added to an account after its code
+	// was verified.
+	AuditEmailAdded = "email.added"
+	// AuditEmailRemoved records a backup address taken off an account.
+	AuditEmailRemoved = "email.removed"
+	// AuditEmailPrimaryChanged records another address becoming the primary.
+	AuditEmailPrimaryChanged = "email.primary_changed"
 	// AuditRefreshReuse records a rotated refresh token being presented again.
 	AuditRefreshReuse = "refresh.reuse_detected"
 )

@@ -31,6 +31,14 @@ const (
 	StageRedirected           SignInStage = "redirected"
 )
 
+// Account stages: changes a signed-in person makes to their account's email
+// addresses. They carry no flow or client, and never the address.
+const (
+	StageEmailAdded          SignInStage = "email_added"
+	StageEmailRemoved        SignInStage = "email_removed"
+	StageEmailPrimaryChanged SignInStage = "email_primary_changed"
+)
+
 // SignInOutcome says how a stage ended.
 type SignInOutcome string
 
@@ -144,6 +152,8 @@ func (h *Auth) limitedEvent(r *http.Request, endpoint string) {
 		stage = StagePasskeySignInStarted
 	case "login.finish":
 		stage = StagePasskeySignInDone
+	case "emails.add", "emails.verify":
+		stage = StageEmailAdded
 	default:
 		return
 	}

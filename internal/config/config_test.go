@@ -151,3 +151,32 @@ func TestLoadRateLimitExempt(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadMaxEmails(t *testing.T) {
+	t.Setenv("ISSUER", "https://example.com")
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("WEBAUTHN_RP_ID", "example.com")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://example.com")
+	t.Setenv("CRYPTO_KEY", strings.Repeat("ab", 32))
+	t.Setenv("REGISTRATION", "closed")
+	t.Setenv("BOOTSTRAP_CODE", "")
+
+	t.Setenv("MAX_EMAILS", "")
+	c, err := Load()
+	if err != nil || c.EmailLimit() != DefaultMaxEmails {
+		t.Fatalf("unset: %v, %v", c, err)
+	}
+	if (&Config{}).EmailLimit() != DefaultMaxEmails {
+		t.Error("a hand-built Config should get the default")
+	}
+	t.Setenv("MAX_EMAILS", "5")
+	if c, err := Load(); err != nil || c.EmailLimit() != 5 {
+		t.Errorf("5: %v, %v", c, err)
+	}
+	for _, bad := range []string{"0", "11", "-1", "three"} {
+		t.Setenv("MAX_EMAILS", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MAX_EMAILS") {
+			t.Errorf("%q must stop Load, got %v", bad, err)
+		}
+	}
+}

@@ -15,10 +15,11 @@ import (
 )
 
 // Mailer delivers the provider's messages: the one-time code that starts a
-// ceremony, and the notice that a passkey was added to an existing account.
-// Implement it to send through something other than SMTP; both methods are
-// required, because a deployment that adds passkeys silently gives the holder
-// no way to notice a compromised mailbox.
+// ceremony or confirms an address, the notice that a passkey was added to an
+// existing account, and the notice that an account's addresses changed.
+// Implement it to send through something other than SMTP; every method is
+// required, because a deployment that changes an account silently gives the
+// holder no way to notice a compromised mailbox.
 type Mailer = mailer.Mailer
 
 // RegistrationPolicy is the shape of Options.RegistrationPolicy.
@@ -28,6 +29,21 @@ type RegistrationPolicy = accounts.RegistrationPolicy
 // existed. Authenticator is empty when the passkey's provider is unknown, which
 // is the common case, so a message must read sensibly without it.
 type PasskeyNotice = mailer.PasskeyNotice
+
+// EmailNotice describes a change to an account's addresses: one added, one
+// removed, or another made primary. It is sent to every address on the account
+// and to the one removed.
+type EmailNotice = mailer.EmailNotice
+
+// EmailChange names what an EmailNotice reports.
+type EmailChange = mailer.EmailChange
+
+// The changes an EmailNotice reports.
+const (
+	EmailAdded          = mailer.EmailAdded
+	EmailRemoved        = mailer.EmailRemoved
+	EmailPrimaryChanged = mailer.EmailPrimaryChanged
+)
 
 // Migrate brings the database at databaseURL up to the schema this version of
 // the provider needs, and returns the version it ends at. Call it before New.
