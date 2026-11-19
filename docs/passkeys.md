@@ -78,6 +78,28 @@ happens, and the passkey simply remains in that device's list until the person
 deletes it there. A script that calls the API directly can send the same
 signal.
 
+### A passkey the provider no longer knows
+
+A device can go on offering a passkey after the server has forgotten it: it was
+revoked from another browser, its account was deleted, or the database was
+reset. `POST /accounts/v1/login/finish` answers an assertion made with a
+credential it has no record of with its own error, rather than the generic
+`401 authentication_failed`:
+
+```json
+{"error": "unknown_credential", "rp_id": "example.com", "credential_id": "<base64url>"}
+```
+
+The sign-in page passes `rp_id` and `credential_id` to
+`PublicKeyCredential.signalUnknownCredential`, where the browser has it, so the
+passkey provider stops offering the passkey, and then offers the email code.
+
+The answer reveals nothing about accounts. The credential id came from the
+caller's own device, a removed passkey and one that never existed here get the
+same answer, and it is reached only with a valid challenge from `login/start`.
+A passkey that is still on record but whose account is disabled gets the
+generic answer, as every other failure does.
+
 Renaming a passkey to the name it already has changes nothing and writes no
 audit row.
 

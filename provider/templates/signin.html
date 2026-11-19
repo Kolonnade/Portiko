@@ -164,6 +164,16 @@ async function finish(url, body) {
     body: JSON.stringify(body),
   });
   const out = await r.json().catch(() => ({}));
+  if (out.error === 'unknown_credential') {
+    // The passkey is not on any account here any more. Tell the passkey
+    // provider, where the browser can, so it stops offering it.
+    if (window.PublicKeyCredential && PublicKeyCredential.signalUnknownCredential) {
+      try { await PublicKeyCredential.signalUnknownCredential({ rpId: out.rp_id, credentialId: out.credential_id }); } catch (e) {}
+    }
+    msg('That passkey is no longer on an account here. Use your email instead.');
+    show('emailStep');
+    return;
+  }
   if (!r.ok) {
     msg(out.error === 'too_many_accounts'
       ? 'This browser already holds as many accounts as it can. Sign out of one first.'

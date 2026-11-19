@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -154,6 +155,19 @@ func (h *Auth) FinishLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, signIn, err := h.svc.FinishLogin(r.Context(),
 		[]byte(response.Response.CollectedClientData.Challenge), response)
+	if errors.Is(err, accounts.ErrUnknownCredential) {
+		// The one failure told apart (see accounts.ErrUnknownCredential): the
+		// page passes these two fields to signalUnknownCredential.
+		h.emit(r, StagePasskeySignInDone, OutcomeFail, "unknown_credential")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error":         "unknown_credential",
+			"rp_id":         h.cfg.WebAuthnRPID,
+			"credential_id": base64.RawURLEncoding.EncodeToString(response.RawID),
+		})
+		return
+	}
 	if err != nil {
 		h.emit(r, StagePasskeySignInDone, OutcomeFail, "verify_failed")
 		generic(w)

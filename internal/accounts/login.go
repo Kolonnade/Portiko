@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -88,6 +89,10 @@ func (s *Service) FinishLogin(ctx context.Context, challenge []byte, response *p
 	}
 
 	cred, err := s.db.ByCredentialID(ctx, response.RawID)
+	if errors.Is(err, store.ErrNotFound) {
+		logStep(ctx, "login: unknown credential", err)
+		return nil, nil, ErrUnknownCredential
+	}
 	if err != nil {
 		logStep(ctx, "login: resolving credential", err)
 		return nil, nil, ErrAuthFailed

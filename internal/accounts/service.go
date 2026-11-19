@@ -70,6 +70,19 @@ func activeHold(until *time.Time) *time.Time {
 // step (see logStep); the client never learns it.
 var ErrAuthFailed = errors.New("authentication failed")
 
+// ErrUnknownCredential is the one failure a sign-in is told apart: the
+// assertion was made with a passkey this provider has no record of, because it
+// was removed, its account was deleted, or it never existed here. The page
+// uses it to tell the passkey provider to stop offering that passkey
+// (PublicKeyCredential.signalUnknownCredential).
+//
+// It reveals nothing about accounts. The credential id came from the caller's
+// own authenticator, "removed" and "never existed" are the same answer, and it
+// is only reached with a valid challenge from login/start. A credential whose
+// account is disabled is still ErrAuthFailed. It wraps ErrAuthFailed, so a
+// caller that does not care sees only that.
+var ErrUnknownCredential = fmt.Errorf("%w: unknown credential", ErrAuthFailed)
+
 // Service runs the ceremonies.
 type Service struct {
 	cfg    *config.Config
