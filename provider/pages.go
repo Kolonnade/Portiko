@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/Kolonnade/Portiko/internal/config"
+	"github.com/Kolonnade/Portiko/internal/localpath"
 	"github.com/Kolonnade/Portiko/profile"
 )
 
@@ -257,10 +257,9 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	// return_to is only ever a local path. Echoing an absolute URL would make
 	// the sign-in page an open redirect.
-	returnTo := q.Get("return_to")
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
-		returnTo = ""
-	}
+	// The same check as the rp package's (internal/localpath): a backslash, a
+	// control character or a second leading slash makes a browser leave.
+	returnTo := localpath.Or(q.Get("return_to"), "")
 	id := q.Get("authRequestID")
 	list := p.auth.accounts(r)
 	adding := q.Get("add") == "1"

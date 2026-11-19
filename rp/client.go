@@ -29,6 +29,7 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/Kolonnade/Portiko/internal/localpath"
 	"github.com/Kolonnade/Portiko/protocol"
 	"github.com/Kolonnade/Portiko/rp/session"
 	"github.com/Kolonnade/Portiko/verify"
@@ -471,12 +472,7 @@ func fetchJSON(ctx context.Context, hc *http.Client, url string, out any) error 
 
 // localPath keeps return_to to a path on this site, so it cannot become an open
 // redirect.
-func localPath(p string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") {
-		return "/"
-	}
-	return p
-}
+func localPath(p string) string { return localpath.Or(p, "/") }
 
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)
