@@ -47,8 +47,8 @@ func (s *Session) Expired() bool { return time.Now().After(s.ExpiresAt) }
 // slack means a request that is about to be made does not race the expiry.
 func (s *Session) AccessExpired() bool { return time.Now().Add(time.Minute).After(s.AccessExpiry) }
 
-// Store persists sessions. Implement it over Postgres in production; MemoryStore
-// is for tests and single-process development.
+// Store persists sessions. Use pgstore (rp/session/pgstore) in production;
+// MemoryStore is for tests and single-process development.
 type Store interface {
 	Get(ctx context.Context, id string) (*Session, error)
 	Put(ctx context.Context, s *Session) error

@@ -34,6 +34,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Key rotation](docs/key-rotation.md) — how the signing key is stored, and the three-step rotation an operator drives
 - [Conformance runs](docs/conformance.md) — the release gate: which OpenID plans, where they run, and the harness that signs the suite in with a virtual passkey
 - [Email addresses](docs/emails.md) — backup addresses: adding one, making it primary, removing one, and the `MAX_EMAILS` limit
+- [Site sessions](docs/rp-sessions.md) — keeping a site's sessions in PostgreSQL with `rp/session/pgstore`, sealed at rest, so a deploy does not sign everyone out
 - [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
 - [Test mail domains](docs/test-mail.md) — the `TEST_MAIL_DOMAINS` setting, which writes sign-in codes for reserved test domains to the log so an end-to-end test can sign up
 - [Serving under a path](docs/path-prefix.md) — an `ISSUER` with a path (`https://host/id`), how to mount `Handler()`, and the cookie that results
@@ -43,6 +44,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - `provider` — run the identity provider.
 - `rp` — sign a site in with it.
 - `rp/session` — server-side sessions for that site.
+- `rp/session/pgstore` — those sessions in PostgreSQL, sealed at rest, so they survive a restart ([docs](docs/rp-sessions.md)).
 - `verify` — check Portiko tokens on an API: access tokens, logout and event tokens, with a cached key set.
 - `verify/verifytest` — mint test tokens against an in-process key, no provider needed.
 
