@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -243,7 +244,19 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 		"Adding":        len(list) > 0,
 		"Create":        create,
 		"CodeRequired":  p.cfg.RegistrationMode() == config.RegistrationCode && !p.auth.policySet,
+		"EmailFrom":     codeSender(p.cfg.EmailFrom),
 	})
+}
+
+// codeSender is the bare address sign-in codes come from, for the page to name
+// so a person knows what to look for in their inbox. A display name never
+// reaches the page, and an unset or unparsable EMAIL_FROM gives "".
+func codeSender(from string) string {
+	a, err := mail.ParseAddress(from)
+	if err != nil {
+		return ""
+	}
+	return a.Address
 }
 
 type chooserData struct {

@@ -31,6 +31,7 @@
 </div>
 
 <div id="codeStep" class="step">
+  {{with .EmailFrom}}<p class="muted">It comes from {{.}}.</p>{{end}}
   <label for="code">Six-digit code</label>
   <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
   <button id="verify">Continue</button>

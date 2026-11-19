@@ -93,6 +93,11 @@ The sign-in page shows the invitation-code field only in `code` mode with no
 deployment with its own `TEMPLATE_DIR` must add the field itself, as
 `bootstrap_code` in the `register/start` body, or nobody can create an account.
 
+The sign-in template also receives `.EmailFrom`: the bare address codes are sent
+from, taken from `EMAIL_FROM` with any display name dropped, or empty when it is
+unset or can't be parsed. The default page names it in the code step, so a
+person knows what to look for in their inbox or spam folder.
+
 ## Asking for a new account (`prompt=create`)
 
 A site that knows the person is new (a welcome page, an invitation link) can ask
