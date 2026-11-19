@@ -25,7 +25,7 @@ The hook runs synchronously on the request goroutine, so a slow hook slows sign-
 
 | Stage | Fires when | Fail reasons |
 |---|---|---|
-| `page_shown` | the sign-in page is rendered, or `/login` is reached with a lapsed request | `request_expired` |
+| `page_shown` | the sign-in page is rendered, or `/login` is reached with a request that is no longer known | `request_expired` |
 | `email_submitted` | `register/start` receives a body | `bad_request` |
 | `code_sent` | the address was accepted. This is *accepted*, not *delivered*: an address quietly declined (an existing account, a missing invitation code) still reads `ok`, so nothing here distinguishes them | `registration_refused`, `send_error`, `rate_limited` |
 | `code_verified` | `register/verify` checks the code | `code_wrong`, `code_expired`, `too_many_attempts`, `code_unknown`, `code_rejected`, `rate_limited` |
@@ -33,7 +33,7 @@ The hook runs synchronously on the request goroutine, so a slow hook slows sign-
 | `passkey_create_finished` | `register/finish` answers, or the page reports the dialog failed | `parse_error`, `verify_failed`, `too_many_accounts`, `server_error`, or the browser's `DOMException` name |
 | `passkey_signin_started` | `login/start` answers | `start_failed`, `rate_limited` |
 | `passkey_signin_finished` | `login/finish` answers, or the page reports the dialog failed | as for `passkey_create_finished`, plus `rate_limited` |
-| `redirected` | the person is sent back to a site | `account_mismatch`, `complete_failed`, or the OpenID Connect error (`login_required`, `access_denied`, …) |
+| `redirected` | the person is sent back to a site | `account_mismatch`, `complete_failed`, `request_expired` (sent back with `login_required` to start again), or the OpenID Connect error (`login_required`, `access_denied`, …) |
 
 A signed-in person's changes to their account's addresses ([emails.md](emails.md)) are reported too. They carry no flow or client.
 

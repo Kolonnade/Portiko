@@ -205,6 +205,12 @@ func (h *Auth) continueAuthRequest(r *http.Request, id string, user *store.User,
 	retry := h.cfg.BasePath() + "/login?authRequestID=" + url.QueryEscape(id)
 	ar, err := h.db.AuthRequestByID(r.Context(), id)
 	if err != nil {
+		// A request that ran out while the person was signing in goes back
+		// to its site through the handoff, which answers login_required so the
+		// site can start again (Login.expired). Only an unknown one ends here.
+		if _, err := h.db.ExpiredAuthRequest(r.Context(), id); err == nil {
+			return retry
+		}
 		return h.cfg.BasePath() + "/u/" + strconv.Itoa(sess.Ordinal) + "/"
 	}
 	if ar.HintSubject != "" && ar.HintSubject != user.Subject {
@@ -217,6 +223,20 @@ func (h *Auth) continueAuthRequest(r *http.Request, id string, user *store.User,
 	}
 	h.emitFor(r, id, ar.ClientID, StageRedirected, OutcomeOK, "", "server")
 	return callbackURL(h.cfg.Issuer, id)
+}
+
+// keepAlive starts the time of the authorization request a sign-in page or
+// endpoint names (?authRequestID=) again, so a person still working through
+// the ceremony does not lose the site that sent them (store.AuthRequestTTL).
+func (h *Auth) keepAlive(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, id := flowOf(r); id != "" {
+			if err := h.db.TouchAuthRequest(r.Context(), id); err != nil {
+				slog.WarnContext(r.Context(), "auth request: extending", "err", err)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Logout: POST /accounts/v1/logout {"account": n}

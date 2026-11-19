@@ -286,6 +286,14 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 	if id != "" {
 		ar, err := p.auth.db.AuthRequestByID(r.Context(), id)
 		create = err == nil && slices.Contains(ar.Prompt, promptCreate)
+		// A page opened (or reloaded) after its request ran out cannot finish
+		// at the site; the handoff sends the person back to start again.
+		if err != nil {
+			if _, err := p.auth.db.ExpiredAuthRequest(r.Context(), id); err == nil {
+				http.Redirect(w, r, p.cfg.BasePath()+"/login?authRequestID="+url.QueryEscape(id), http.StatusFound)
+				return
+			}
+		}
 	}
 	flow := id
 	if flow == "" {

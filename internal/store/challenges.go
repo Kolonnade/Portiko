@@ -54,7 +54,10 @@ func (d *DB) SweepExpired(ctx context.Context) (int64, error) {
 		return n, err
 	}
 	n += tag2.RowsAffected()
-	tag3, err := d.pool.Exec(ctx, `DELETE FROM auth_requests WHERE expires_at < now()`)
+	// An expired request is kept a while, so the person can still be sent
+	// back to the site with an error (ExpiredAuthRequest).
+	tag3, err := d.pool.Exec(ctx, `DELETE FROM auth_requests WHERE expires_at < now() - $1::interval`,
+		ExpiredAuthRequestRetention.String())
 	if err != nil {
 		return n, err
 	}

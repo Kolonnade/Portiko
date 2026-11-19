@@ -78,6 +78,10 @@ type Client struct {
 
 const (
 	flowCookie   = "portiko_rp_flow"
+	// flowTTL is how long a sign-in may take, from leaving the site to coming
+	// back. It matches the provider's longest authorization request
+	// (store.AuthRequestMaxLife): a first sign-up includes reading an email.
+	flowTTL = 2 * time.Hour
 	leeway       = 30 * time.Second
 	sessionTTL   = 30 * 24 * time.Hour
 	fetchTimeout = 10 * time.Second
@@ -107,7 +111,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	issuer := strings.TrimSuffix(cfg.Issuer, "/")
 
 	cookieOpts := []httphelper.CookieHandlerOpt{
-		httphelper.WithSameSite(http.SameSiteLaxMode), httphelper.WithMaxAge(600),
+		httphelper.WithSameSite(http.SameSiteLaxMode), httphelper.WithMaxAge(int(flowTTL / time.Second)),
 	}
 	if cfg.Insecure {
 		cookieOpts = append(cookieOpts, httphelper.WithUnsecure())
@@ -180,9 +184,14 @@ func (c *Client) Version() protocol.Version { return c.version }
 // short-lived cookie rather than held in this process: any replica of the site
 // can finish a sign-in another one started.
 type flowState struct {
-	State    string `json:"s"`
-	Nonce    string `json:"n"`
-	ReturnTo string `json:"r"`
+	State     string `json:"s"`
+	Nonce     string `json:"n"`
+	ReturnTo  string `json:"r"`
+	Prompt    string `json:"p,omitempty"`
+	LoginHint string `json:"h,omitempty"`
+	// Restarted is set on a sign-in started again after the provider answered
+	// login_required, so a provider that keeps answering it is not looped.
+	Restarted bool `json:"x,omitempty"`
 }
 
 type nonceKey struct{}
@@ -202,26 +211,37 @@ const promptCreate = "create"
 func (c *Client) LoginHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		state, err1 := randomToken(32)
-		nonce, err2 := randomToken(32)
-		if err1 != nil || err2 != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		flow, _ := json.Marshal(flowState{State: state, Nonce: nonce, ReturnTo: localPath(q.Get("return_to"))})
-		if err := c.cookies.SetCookie(w, flowCookie, string(flow)); err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		params := []zrp.URLParamOpt{zrp.WithURLParam("nonce", nonce)}
+		f := flowState{ReturnTo: localPath(q.Get("return_to")), LoginHint: q.Get("login_hint")}
 		if p := q.Get("prompt"); p == oidc.PromptSelectAccount || p == oidc.PromptLogin || p == promptCreate {
-			params = append(params, zrp.WithPromptURLParam(p))
+			f.Prompt = p
 		}
-		if h := q.Get("login_hint"); h != "" {
-			params = append(params, zrp.WithURLParam("login_hint", h))
-		}
-		zrp.AuthURLHandler(func() string { return state }, c.rp, params...).ServeHTTP(w, r)
+		c.startSignIn(w, r, f)
 	})
+}
+
+// startSignIn sends the browser to the provider with fresh state and nonce,
+// remembering f in the flow cookie.
+func (c *Client) startSignIn(w http.ResponseWriter, r *http.Request, f flowState) {
+	state, err1 := randomToken(32)
+	nonce, err2 := randomToken(32)
+	if err1 != nil || err2 != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	f.State, f.Nonce = state, nonce
+	flow, _ := json.Marshal(f)
+	if err := c.cookies.SetCookie(w, flowCookie, string(flow)); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	params := []zrp.URLParamOpt{zrp.WithURLParam("nonce", nonce)}
+	if f.Prompt != "" {
+		params = append(params, zrp.WithPromptURLParam(f.Prompt))
+	}
+	if f.LoginHint != "" {
+		params = append(params, zrp.WithURLParam("login_hint", f.LoginHint))
+	}
+	zrp.AuthURLHandler(func() string { return state }, c.rp, params...).ServeHTTP(w, r)
 }
 
 // CallbackHandler completes a sign-in: it checks the state, redeems the code,
@@ -235,6 +255,16 @@ func (c *Client) CallbackHandler() http.Handler {
 			return
 		}
 		c.cookies.DeleteCookie(w, flowCookie)
+		// The provider gave up on this sign-in, typically because the person
+		// took longer than it keeps a request. Start again, once, with the same
+		// destination: the person is usually signed in at the provider by now,
+		// so this costs them nothing and keeps where they were going. The
+		// prompt is not repeated: login or create would ask someone who has just
+		// signed in, or just made their account, to do it again.
+		if r.URL.Query().Get("error") == string(oidc.LoginRequired) && !flow.Restarted {
+			c.startSignIn(w, r, flowState{ReturnTo: flow.ReturnTo, LoginHint: flow.LoginHint, Restarted: true})
+			return
+		}
 		ctx := context.WithValue(r.Context(), nonceKey{}, flow.Nonce)
 		zrp.CodeExchangeHandler(func(w http.ResponseWriter, r *http.Request, tokens *oidc.Tokens[*oidc.IDTokenClaims], _ string, _ zrp.RelyingParty) {
 			c.finishSignIn(w, r, tokens, flow.ReturnTo)

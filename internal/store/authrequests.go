@@ -37,8 +37,24 @@ type AuthRequest struct {
 	ExpiresAt time.Time
 }
 
-// AuthRequestTTL bounds how long a person has to sign in.
-const AuthRequestTTL = 10 * time.Minute
+// AuthRequestTTL is how long a request lives without activity. Each request
+// to a sign-in page or endpoint naming it starts the time again
+// (TouchAuthRequest), up to AuthRequestMaxLife from when the site sent the
+// person here.
+//
+// A first sign-up has to fit: type an address, find the code (perhaps in
+// spam), enter it, create a passkey. The request itself guards nothing a person
+// could guess; the code and challenge lifetimes bound those parts.
+const AuthRequestTTL = 30 * time.Minute
+
+// AuthRequestMaxLife caps a request however active it stays. A site's own
+// sign-in state (rp's flow cookie) must live at least this long.
+const AuthRequestMaxLife = 2 * time.Hour
+
+// ExpiredAuthRequestRetention is how long a request that ran out is kept, so a
+// person who comes back to it can be sent to the site with an error to start
+// again, rather than to a dead end.
+const ExpiredAuthRequestRetention = 24 * time.Hour
 
 // AuthCodeTTL is deliberately short: the code is handed over in a URL, and its
 // only job is to survive one redirect.
@@ -86,6 +102,34 @@ func (d *DB) AuthRequestByID(ctx context.Context, id string) (*AuthRequest, erro
 		`SELECT `+authRequestColumns+`
 		   FROM auth_requests a LEFT JOIN users u ON u.id = a.user_id
 		  WHERE a.id = $1 AND a.expires_at > now()`, id))
+}
+
+// TouchAuthRequest starts a live, uncompleted request's AuthRequestTTL again,
+// never past AuthRequestMaxLife from its creation. A request that is unknown,
+// completed or already expired is left alone.
+func (d *DB) TouchAuthRequest(ctx context.Context, id string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil
+	}
+	_, err := d.pool.Exec(ctx,
+		`UPDATE auth_requests
+		    SET expires_at = LEAST(now() + $2::interval, created_at + $3::interval)
+		  WHERE id = $1 AND NOT done AND expires_at > now()`,
+		id, AuthRequestTTL.String(), AuthRequestMaxLife.String())
+	return err
+}
+
+// ExpiredAuthRequest loads a request that ran out before anyone completed it,
+// while it is still retained. It is for one thing: sending the person back to
+// the site with an error, so the site can start its sign-in again.
+func (d *DB) ExpiredAuthRequest(ctx context.Context, id string) (*AuthRequest, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, ErrNotFound
+	}
+	return scanAuthRequest(d.pool.QueryRow(ctx,
+		`SELECT `+authRequestColumns+`
+		   FROM auth_requests a LEFT JOIN users u ON u.id = a.user_id
+		  WHERE a.id = $1 AND a.expires_at <= now() AND NOT a.done`, id))
 }
 
 // SaveAuthCode records the code issued for a completed request, and shortens

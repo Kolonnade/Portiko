@@ -95,13 +95,13 @@ func Router(d Deps) http.Handler {
 	api.HandleFunc("POST /accounts/v1/emails/{id}/primary", d.Auth.MakePrimaryEmail)
 	api.HandleFunc("POST /accounts/v1/emails/{id}/remove", d.Auth.RemoveEmail)
 	api.HandleFunc("GET /accounts/v1/session", d.Auth.Session)
-	mux.Handle("/accounts/", VersionMiddleware(api))
+	mux.Handle("/accounts/", d.Auth.keepAlive(VersionMiddleware(api)))
 
-	mux.HandleFunc("GET /login", d.Login.Start)
+	mux.Handle("GET /login", d.Auth.keepAlive(http.HandlerFunc(d.Login.Start)))
 	mux.HandleFunc("POST /login/select", d.Login.Select)
 
-	mux.HandleFunc("GET /signin", d.Pages.SignIn)
-	mux.HandleFunc("POST /signin/event", limited("signin.event", nil, d.Auth.SignInEvent))
+	mux.Handle("GET /signin", d.Auth.keepAlive(http.HandlerFunc(d.Pages.SignIn)))
+	mux.Handle("POST /signin/event", d.Auth.keepAlive(limited("signin.event", nil, d.Auth.SignInEvent)))
 	mux.HandleFunc("GET /profile", d.Pages.ProfileRedirect)
 	mux.HandleFunc("GET /u/{n}/{$}", d.Pages.Home)
 	mux.HandleFunc("GET /u/{n}/profile", d.Pages.Profile)

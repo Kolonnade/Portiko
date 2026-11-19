@@ -32,9 +32,7 @@ func (l *Login) Start(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("authRequestID")
 	ar, err := l.auth.db.AuthRequestByID(ctx, id)
 	if err != nil {
-		l.auth.emit(r, StagePageShown, OutcomeFail, "request_expired")
-		l.auth.pages.message(w, http.StatusBadRequest, "This sign-in link has expired",
-			"Go back to the site you were signing in to and try again.")
+		l.expired(w, r, id)
 		return
 	}
 	c, err := l.auth.db.ClientByID(ctx, ar.ClientID)
@@ -94,8 +92,7 @@ func (l *Login) Select(w http.ResponseWriter, r *http.Request) {
 	id := r.PostFormValue("authRequestID")
 	ar, err := l.auth.db.AuthRequestByID(ctx, id)
 	if err != nil {
-		l.auth.pages.message(w, http.StatusBadRequest, "This sign-in link has expired",
-			"Go back to the site you were signing in to and try again.")
+		l.expired(w, r, id)
 		return
 	}
 	n, err := strconv.Atoi(r.PostFormValue("account"))
@@ -159,6 +156,27 @@ func (l *Login) complete(w http.ResponseWriter, r *http.Request, ar *store.AuthR
 }
 
 // fail sends a protocol error back to the client's registered redirect URI.
+// expired answers for a request that is no longer live. One that ran out
+// before anyone completed it, and is still retained, goes back to its site as
+// login_required with the site's state, so the site can start its sign-in again
+// and keep where the person was going. Anything else gets a page.
+func (l *Login) expired(w http.ResponseWriter, r *http.Request, id string) {
+	ctx := r.Context()
+	if ar, err := l.auth.db.ExpiredAuthRequest(ctx, id); err == nil {
+		// The redirect URI was checked when the request was made; check it is
+		// still registered, so a site that was removed is not redirected to.
+		if c, err := l.auth.db.ClientByID(ctx, ar.ClientID); err == nil && slices.Contains(c.RedirectURIs, ar.RedirectURI) {
+			l.auth.emitFor(r, ar.ID, ar.ClientID, StageRedirected, OutcomeFail, "request_expired", "server")
+			op.AuthRequestError(w, r, errAuthRequest{ar},
+				oidc.ErrLoginRequired().WithDescription("the sign-in took too long; start it again"), l.auth.op)
+			return
+		}
+	}
+	l.auth.emit(r, StagePageShown, OutcomeFail, "request_expired")
+	l.auth.pages.message(w, http.StatusBadRequest, "This sign-in link has expired",
+		"Go back to the site you were signing in to and try again.")
+}
+
 func (l *Login) fail(w http.ResponseWriter, r *http.Request, ar *store.AuthRequest, err error) {
 	reason := "error"
 	var oerr *oidc.Error
