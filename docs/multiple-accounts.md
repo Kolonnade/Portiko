@@ -57,6 +57,8 @@ The `rp` package offers two ways out, and a site chooses per button:
 
 `EndSessionHandler` keeps the ID token from sign-in on the server and sends it to the provider's `end_session_endpoint` as `id_token_hint`, server to server; the browser never visits the provider. The provider ends only the session that token names: other accounts signed in to the same browser stay signed in, and one of them becomes the default. Every other site that held the ended session is told through back-channel logout. If the provider cannot be reached, the site's own session still ends.
 
+When the site holds no usable session for the browser (it restarted with an in-memory store, the session expired, or the cookie is gone), it cannot say which account to end. `EndSessionHandler` then sends the browser to the provider's `end_session_endpoint` with `client_id` and `post_logout_redirect_uri` set to the site's origin followed by `after`. With no `id_token_hint`, the provider ends the sessions in that browser that signed in to that site (those holding a live refresh token issued to it), tells the sites that held them, and redirects back. Other accounts in the browser stay signed in, and if none signed in to the site, nothing ends. Without this, sign-out after a restart would end nothing, and on a shared computer the next person could choose the previous account at the provider without a passkey. Register `https://<site>/<after>` as one of the client's post-logout redirect URIs, or the provider refuses the redirect and shows an error.
+
 ## How a client says which account
 
 Three shapes, depending on what you are building. Pick one per application and be consistent.

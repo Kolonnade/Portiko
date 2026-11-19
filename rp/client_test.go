@@ -210,25 +210,60 @@ func TestEndSessionHandler_ProviderDownStillSignsOut(t *testing.T) {
 	}
 }
 
-func TestEndSessionHandler_NoSession(t *testing.T) {
-	f := newFakeIssuer(t, http.StatusFound)
-	c, _ := newEndSessionClient(t, f)
-
-	rec := signOut(c.EndSessionHandler("/welcome"), "")
-	if f.endCalls != 0 {
-		t.Errorf("end_session called %d times with no session", f.endCalls)
-	}
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/welcome" {
-		t.Fatalf("got %d %q, want 302 /welcome", rec.Code, rec.Header().Get("Location"))
+// With no usable site session (an in-memory store emptied by a restart, say),
+// sign-out sends the browser to the provider to end its own session there,
+// rather than straight back to after with the provider still signed in.
+func TestEndSessionHandler_NoSessionGoesToTheProvider(t *testing.T) {
+	for _, c := range []struct {
+		name, cookie, idToken string
+	}{
+		{"cookie, empty store", "gone", ""},
+		{"no cookie", "", ""},
+		{"session without an ID token", "sess-1", "-"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeIssuer(t, http.StatusFound)
+			client, store := newEndSessionClient(t, f)
+			if c.idToken == "-" {
+				seedSession(t, store, "")
+			}
+			rec := signOut(client.EndSessionHandler("/welcome"), c.cookie)
+			if f.endCalls != 0 {
+				t.Errorf("end_session called server to server %d times with no ID token", f.endCalls)
+			}
+			loc, err := url.Parse(rec.Header().Get("Location"))
+			if err != nil || rec.Code != http.StatusFound {
+				t.Fatalf("got %d %q", rec.Code, rec.Header().Get("Location"))
+			}
+			if got := loc.Scheme + "://" + loc.Host + loc.Path; got != f.srv.URL+"/oauth/end_session" {
+				t.Fatalf("redirected to %q, want the provider's end_session_endpoint", got)
+			}
+			q := loc.Query()
+			if q.Get("client_id") != "site" || q.Get("post_logout_redirect_uri") != "http://site.test/welcome" || q.Get("id_token_hint") != "" {
+				t.Errorf("end_session query = %v", q)
+			}
+			if c.cookie != "" && !clearsCookie(rec) {
+				t.Error("the session cookie was not cleared")
+			}
+			if _, err := store.Get(context.Background(), "sess-1"); err == nil {
+				t.Error("the site session survived signing out")
+			}
+		})
 	}
 }
 
 func TestEndSessionHandler_AfterIsLocal(t *testing.T) {
 	f := newFakeIssuer(t, http.StatusFound)
-	c, _ := newEndSessionClient(t, f)
+	c, store := newEndSessionClient(t, f)
+	s := seedSession(t, store, "tok")
 
-	rec := signOut(c.EndSessionHandler("https://evil.example/"), "")
+	rec := signOut(c.EndSessionHandler("https://evil.example/"), s.ID)
 	if got := rec.Header().Get("Location"); got != "/" {
 		t.Fatalf("Location = %q, want /", got)
+	}
+	rec = signOut(c.EndSessionHandler("/\\evil.example"), "")
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	if got := loc.Query().Get("post_logout_redirect_uri"); got != "http://site.test/" {
+		t.Errorf("post_logout_redirect_uri = %q, want the site root", got)
 	}
 }

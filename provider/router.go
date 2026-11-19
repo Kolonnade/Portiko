@@ -63,6 +63,7 @@ func Router(d Deps) http.Handler {
 	// verified — so there is no address to charge, and the budget is loose enough
 	// that ordinary traffic never meets it.
 	mux.HandleFunc("POST /oauth/token", limited("oauth.token", nil, d.OpenID.ServeHTTP))
+	mux.Handle("/oauth/end_session", withBrowserToken(d.OpenID))
 	mux.Handle("/oauth/", d.OpenID)
 	mux.Handle("GET /.well-known/openid-configuration", servedOnly(d.OpenID))
 	mux.Handle("GET /.well-known/jwks.json", d.OpenID)

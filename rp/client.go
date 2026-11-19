@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -310,12 +311,25 @@ func (c *Client) LogoutHandler() http.Handler {
 // Unlike LogoutHandler, the account is signed out at the provider too, so the
 // next sign-in asks again. Only this account ends: other accounts signed in to
 // the same browser stay signed in, and the provider tells the other sites that
-// held this account's session through back-channel logout. The provider is
-// called server to server with the session's ID token as id_token_hint; the
-// browser never visits the provider. If that call fails, the site's own
-// session still ends.
+// held this account's session through back-channel logout.
+//
+// With a site session that holds an ID token, the provider is called server to
+// server with it as id_token_hint, and the browser never visits the provider.
+// If that call fails, the site's own session still ends.
+//
+// Without one (the site restarted with an in-memory store, the session expired,
+// or the cookie is gone) the site cannot say which account to end. The browser
+// is sent to the provider's end_session_endpoint instead, with client_id and
+// post_logout_redirect_uri, so the provider ends the sessions in that browser
+// that signed in to this site and sends it back to after. Otherwise sign-out
+// would end nothing, and on a shared computer the next person could pick the
+// previous account at the provider without a passkey. Register the site's
+// origin followed by after (e.g. https://site.example/welcome) as a
+// post-logout redirect URI, or the provider refuses the redirect.
 func (c *Client) EndSessionHandler(after string) http.Handler {
+	after = localPath(after)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ended := false
 		if ck, err := r.Cookie(session.CookieName); err == nil {
 			if sess, err := c.cfg.Sessions.Get(r.Context(), ck.Value); err == nil && sess.IDToken != "" {
 				ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), endSessionTimeout)
@@ -323,12 +337,46 @@ func (c *Client) EndSessionHandler(after string) http.Handler {
 					slog.WarnContext(ctx, "rp: ending the provider session", "err", err)
 				}
 				cancel()
+				ended = true
 			}
 			_ = c.cfg.Sessions.Delete(r.Context(), ck.Value)
 		}
 		session.ClearCookie(w, !c.cfg.Insecure)
-		http.Redirect(w, r, localPath(after), http.StatusFound)
+		if !ended {
+			if to := c.frontChannelEndSession(after); to != "" {
+				http.Redirect(w, r, to, http.StatusFound)
+				return
+			}
+		}
+		http.Redirect(w, r, after, http.StatusFound)
 	})
+}
+
+// frontChannelEndSession is the provider's end-session URL for a browser this
+// site holds no session for, or "" when the provider advertises none.
+func (c *Client) frontChannelEndSession(after string) string {
+	endpoint := c.rp.GetEndSessionEndpoint()
+	if endpoint == "" {
+		return ""
+	}
+	q := url.Values{"client_id": {c.cfg.ClientID}}
+	if origin := originOf(c.cfg.RedirectURL); origin != "" {
+		q.Set("post_logout_redirect_uri", origin+after)
+	}
+	sep := "?"
+	if strings.Contains(endpoint, "?") {
+		sep = "&"
+	}
+	return endpoint + sep + q.Encode()
+}
+
+// originOf is scheme://host of an absolute URL, or "".
+func originOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 type ctxKey struct{}

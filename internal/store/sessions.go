@@ -201,6 +201,30 @@ func (d *DB) EndSession(ctx context.Context, browserToken string, ordinal int) (
 	return d.endWhere(ctx, `browser_hash = $1 AND ordinal = $2`, HashToken(browserToken), ordinal)
 }
 
+// SessionsSignedInTo returns the sids of the sessions in a browser that signed
+// in to a client: those with a live refresh token issued to it.
+func (d *DB) SessionsSignedInTo(ctx context.Context, browserToken, clientID string) ([]string, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT s.sid FROM sso_sessions s
+		  WHERE s.browser_hash = $1
+		    AND EXISTS (SELECT 1 FROM refresh_tokens r
+		                 WHERE r.sid = s.sid AND r.client_id = $2 AND r.revoked_at IS NULL)
+		  ORDER BY s.ordinal`, HashToken(browserToken), clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		out = append(out, sid)
+	}
+	return out, rows.Err()
+}
+
 // EndSessionBySID signs out the session with the given public id, wherever it
 // is.
 func (d *DB) EndSessionBySID(ctx context.Context, sid string) (*EndedSession, error) {

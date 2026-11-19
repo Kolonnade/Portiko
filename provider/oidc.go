@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -244,8 +245,66 @@ func (s *storage) TerminateSessionFromRequest(ctx context.Context, req *op.EndSe
 		if err := s.TerminateSession(ctx, req.UserID, req.ClientID); err != nil {
 			return "", err
 		}
+	} else if req.IDTokenHintClaims == nil && req.ClientID != "" {
+		if err := s.endBrowserSessionsFor(ctx, req.ClientID); err != nil {
+			return "", err
+		}
 	}
 	return req.RedirectURI, nil
+}
+
+// endBrowserSessionsFor handles an end-session request with no id_token_hint:
+// a site that lost its own session (a restart, an expired cookie) sends the
+// browser here to sign out. The site cannot say which account it meant, so the
+// sessions that end are the ones in this browser that signed in to that site,
+// found by the refresh tokens issued to it under each session. Other accounts
+// in the browser stay signed in, and nothing ends if none signed in to it.
+//
+// Anyone can send a browser here, as with any RP-initiated logout without a
+// hint. The worst it does is sign an account out of the sites it is signed in
+// to through this one.
+func (s *storage) endBrowserSessionsFor(ctx context.Context, clientID string) error {
+	token := browserTokenFrom(ctx)
+	if token == "" {
+		return nil
+	}
+	sids, err := s.db.SessionsSignedInTo(ctx, token, clientID)
+	if err != nil {
+		return err
+	}
+	for _, sid := range sids {
+		ended, err := s.db.EndSessionBySID(ctx, sid)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if s.ended != nil {
+			if u, err := s.db.ByID(ctx, ended.UserID); err == nil {
+				s.ended(ctx, u.Subject, ended.SID, ended.ClientIDs)
+			}
+		}
+	}
+	return nil
+}
+
+type browserTokenKey struct{}
+
+// withBrowserToken hands the end-session endpoint the browser's SSO cookie,
+// which zitadel/oidc does not pass to storage.
+func withBrowserToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if t := browserToken(r); t != "" {
+			r = r.WithContext(context.WithValue(r.Context(), browserTokenKey{}, t))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func browserTokenFrom(ctx context.Context) string {
+	t, _ := ctx.Value(browserTokenKey{}).(string)
+	return t
 }
 
 // ----------------------------------------------------------------- claims
