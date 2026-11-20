@@ -123,3 +123,16 @@ func TestTestDomainsPasswordNotice(t *testing.T) {
 		t.Errorf("log missing notice: %q", buf.String())
 	}
 }
+
+func TestEnvelopeFrom(t *testing.T) {
+	for in, want := range map[string]string{
+		"Agora <noreply@sstools.co>": "noreply@sstools.co",
+		"noreply@sstools.co":         "noreply@sstools.co",
+		`"Agora Hub" <a@b.co>`:       "a@b.co",
+		" a@b.co ":                   "a@b.co",
+	} {
+		if got := envelopeFrom(in); got != want {
+			t.Errorf("envelopeFrom(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

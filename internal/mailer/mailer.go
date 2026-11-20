@@ -7,6 +7,7 @@ package mailer
 import (
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -322,13 +323,25 @@ func (m *SMTP) SendPasswordChanged(to string, n PasswordNotice) error {
 // send writes one message. Headers live here rather than in each caller so a new
 // message cannot ship with a malformed header block.
 func (m *SMTP) send(to, subject, body string) error {
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s", m.From, to, subject, body)
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n"+
+		"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n%s",
+		m.From, to, subject, time.Now().Format(time.RFC1123Z), body)
 	addr := fmt.Sprintf("%s:%d", m.Host, m.Port)
 	auth := smtp.PlainAuth("", m.Username, m.Password, m.Host)
-	if err := smtp.SendMail(addr, auth, m.From, []string{to}, []byte(msg)); err != nil {
+	if err := smtp.SendMail(addr, auth, envelopeFrom(m.From), []string{to}, []byte(msg)); err != nil {
 		return fmt.Errorf("mailer: sending to %s: %w", redact(to), err)
 	}
 	return nil
+}
+
+// envelopeFrom is the bare address for SMTP's MAIL FROM. EMAIL_FROM may carry
+// a display name ("Agora <noreply@example.com>"), which belongs only in the
+// From header: servers such as Amazon SES refuse it in the envelope.
+func envelopeFrom(from string) string {
+	if a, err := mail.ParseAddress(from); err == nil {
+		return a.Address
+	}
+	return strings.TrimSpace(from)
 }
 
 // redact keeps an address out of logs while leaving enough to debug with.
