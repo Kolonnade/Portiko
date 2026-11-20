@@ -9,6 +9,7 @@ Design notes written ahead of the code, so the implementation has something to b
 | [recovery.md](recovery.md) | What happens when someone loses their passkey, their email, or both: the ladder from a second passkey down to the operator, and the rules every path follows |
 | [key-rotation.md](key-rotation.md) | How the signing key is stored, the one-off that encrypts an existing one, and the three-step rotation — including the emergency version and what forcing it costs |
 | [passkeys.md](passkeys.md) | Listing, renaming and revoking an account's passkeys: the page, the `/accounts/v1/passkeys` endpoints, the last-passkey rule, audit rows, and which WebAuthn signals are sent |
+| [passwords.md](passwords.md) | The opt-in `PASSWORDS` setting for people who cannot use passkeys: where it is offered, the NIST policy, Argon2id storage, the limits and per-account backoff, the last-credential rule, the endpoints, and a scripted end-to-end client |
 | [emails.md](emails.md) | Backup addresses: the `MAX_EMAILS` limit, adding one with a code, making it primary, removing one, re-authentication, notices, claims, and the page's template data |
 | [rp-sessions.md](rp-sessions.md) | A site's own sessions in PostgreSQL with `rp/session/pgstore`: configuration, what is sealed, pruning, and rotating the key |
 | [rate-limits.md](rate-limits.md) | What is limited and by how much, why the per-address counters live in Postgres, and why `TRUSTED_PROXIES` has to be set behind a reverse proxy |

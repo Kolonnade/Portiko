@@ -123,9 +123,10 @@ primary, remove the others and revoke the holder's passkeys in a minute, and the
 notices of each step would arrive after the holder had no way back in.
 
 So a passkey enrolled through recovery is held for a week
-(`accounts.RecoveryHold`). A session signed in with it may not change the
-primary, remove an address or revoke a passkey: those answer
-`403 recovery_hold`. Adding an address, the profile and signing in to sites are
+(`accounts.RecoveryHold`), and so is a password set through recovery
+([passwords.md](passwords.md)). A session signed in with it may not change the
+primary, remove an address, revoke a passkey or change or remove the password:
+those answer `403 recovery_hold`. Adding an address, the profile and signing in to sites are
 not held. Signing in with a passkey the account had before clears the hold for
 that session, so the holder, warned by the passkey-added notice, can remove
 whatever the recovered passkey added and revoke it straight away.
@@ -168,6 +169,7 @@ by putting a `text/template` in its `TEMPLATE_DIR`:
 | `mail-code.txt` | A one-time code (sign-in, recovery, or confirming a new address) | `.ServiceName`, `.Code` |
 | `mail-passkey-added.txt` | A passkey added to an existing account | `.ServiceName`, `.When`, `.Authenticator`, `.ReviewURL` |
 | `mail-email-changed.txt` | An address added or removed, or the primary changed | `.ServiceName`, `.When`, `.Change` (`added`, `removed`, `primary_changed`), `.Address`, `.Previous`, `.ReviewURL` |
+| `mail-password-changed.txt` | A password added, changed or removed ([passwords.md](passwords.md)) | `.ServiceName`, `.When`, `.Change` (`added`, `changed`, `removed`), `.Recovery`, `.ReviewURL` |
 
 Each template's output is a `Subject: …` line, a blank line, then the body:
 

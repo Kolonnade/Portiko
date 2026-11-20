@@ -2,7 +2,7 @@
 
 A passkey-first identity provider you run yourself, and the libraries that sign people in to your sites.
 
-The entrance column of [Kolonnade](https://github.com/Kolonnade), spelled with a **K** for keys: the door it fronts opens with a passkey, never a password.
+The entrance column of [Kolonnade](https://github.com/Kolonnade), spelled with a **K** for keys: the door it fronts opens with a passkey, and with a password only where a deployment chooses to allow one.
 
 Go and PostgreSQL, built on [`zitadel/oidc`](https://github.com/zitadel/oidc) so the OAuth and OpenID Connect machinery comes from a maintained implementation rather than from us.
 
@@ -12,6 +12,7 @@ Go and PostgreSQL, built on [`zitadel/oidc`](https://github.com/zitadel/oidc) so
 
 - **Passkeys, and nothing to remember.** Enrollment, sign-in and recovery, with the credential-flag and sign-count rules synced passkeys actually need.
 - **Passkey management.** People list, rename and revoke their own passkeys; the last one cannot be removed. See [docs/passkeys.md](docs/passkeys.md).
+- **A password, only if you ask for one.** `PASSWORDS=allow` lets someone whose device cannot use passkeys set a password instead (Argon2id, NIST's rules, rate limited, `amr: ["pwd"]`). Off by default; passkeys stay the recommendation. See [docs/passwords.md](docs/passwords.md).
 - **One sign-in across your sites**, whether they share a domain or not. No third-party cookies.
 - **Several signed-in accounts at once**, numbered from 0 the way people expect, with each site signed in as whichever account the person picked for it.
 - **Sign-out that arrives**, through OpenID Connect Back-Channel Logout, and profile changes pushed to sites as Shared Signals events instead of waiting for the next token refresh.
@@ -36,6 +37,7 @@ Written ahead of the code, so the implementation has something to be checked aga
 - [Email addresses](docs/emails.md) — backup addresses: adding one, making it primary, removing one, and the `MAX_EMAILS` limit
 - [Site sessions](docs/rp-sessions.md) — keeping a site's sessions in PostgreSQL with `rp/session/pgstore`, sealed at rest, so a deploy does not sign everyone out
 - [Rate limits](docs/rate-limits.md) — what is limited, and the `TRUSTED_PROXIES` setting a deployment behind a proxy needs
+- [Passwords](docs/passwords.md) — the opt-in `PASSWORDS` setting for people who cannot use passkeys: the policy, storage, limits, endpoints, and a scripted end-to-end client
 - [Test mail domains](docs/test-mail.md) — the `TEST_MAIL_DOMAINS` setting, which writes sign-in codes for reserved test domains to the log so an end-to-end test can sign up
 - [Serving under a path](docs/path-prefix.md) — an `ISSUER` with a path (`https://host/id`), how to mount `Handler()`, and the cookie that results
 

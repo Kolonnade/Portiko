@@ -12,6 +12,7 @@ all, not a capacity measure.
 | `POST /accounts/v1/register/verify` — submit a code | the guess budget below | 60 / hour |
 | `GET /accounts/v1/login/start` | 60 / hour | 120 / hour |
 | `POST /accounts/v1/login/finish` | — | 120 / hour |
+| `POST /accounts/v1/login/password` (`PASSWORDS=allow`) | 10 / hour | 60 / hour |
 | `POST /oauth/token` | — | 3600 / hour |
 | `POST /accounts/v1/emails/add` — add an address | 5 / hour | 30 / hour |
 | `POST /accounts/v1/emails/verify` | the guess budget below | 60 / hour |
@@ -27,6 +28,11 @@ reset by a new code, by consuming one, or by one expiring.
 
 Once that budget is gone, even the correct code is refused until the window turns
 over. That is the point.
+
+A password has the same problem and a third limit: a per-account backoff that
+every address and IP share, five failures free and then a doubling wait up to an
+hour. It answers like a wrong password, never `429`, so it cannot reveal that an
+address has one ([passwords.md](passwords.md#guessing-is-bounded)).
 
 The numbers are set for a deployment serving households, not a public sign-up
 funnel. A family behind one address is the case that must not be locked out, so

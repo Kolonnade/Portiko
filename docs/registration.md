@@ -84,7 +84,9 @@ the existence of one address per rate-limited request.
 1. Deploy with `REGISTRATION=code` and a long `BOOTSTRAP_CODE`.
 2. Open `/signin`, choose email, and enter your address and the invitation code.
 3. Enter the emailed code and create a passkey. Add a second passkey straight
-   away ([Recovery](recovery.md)).
+   away ([Recovery](recovery.md)). With `PASSWORDS=allow` the page also offers
+   **Set a password** at this step, for a device that cannot use passkeys
+   ([Passwords](passwords.md)); a passkey is still the recommended choice.
 4. To let others join, give them the code. To stop, set `REGISTRATION=closed`
    and restart; existing accounts are unaffected.
 
@@ -97,6 +99,20 @@ The sign-in template also receives `.EmailFrom`: the bare address codes are sent
 from, taken from `EMAIL_FROM` with any display name dropped, or empty when it is
 unset or can't be parsed. The default page names it in the code step, so a
 person knows what to look for in their inbox or spam folder.
+
+## Choosing a passkey or a password
+
+The code is accepted by `register/verify`, which answers with the passkey
+creation options and, when `PASSWORDS=allow`, a `password_token`. The ceremony
+then ends one of two ways, and either spends the code:
+
+- `register/finish` with a new passkey, as always;
+- `register/password` with `{"token", "password"}`, which creates the account
+  with a password and no passkey ([Passwords](passwords.md)).
+
+Nothing else about registration changes: the mode, the invitation code and a
+`RegistrationPolicy` decide who may create an account before either choice is
+offered.
 
 ## Asking for a new account (`prompt=create`)
 

@@ -44,6 +44,10 @@ level=WARN msg="test mail domain; not sending, logging instead" to=alice@example
 A harness finds the latest line with `to=<address>` and takes `code=(\d{6})`
 from it. Use a fresh address per run.
 
+A test that cannot drive a passkey can, on a deployment with `PASSWORDS=allow`,
+choose a password after the code and sign in with it later, all with plain HTTP
+requests. [Passwords](passwords.md#a-scripted-client) lists the requests.
+
 The [rate limits](rate-limits.md) still apply to test addresses: five codes per
 address per hour, ten guesses per address per hour. A test deployment whose suite
 runs often from one machine can list that machine in `RATE_LIMIT_EXEMPT` to skip

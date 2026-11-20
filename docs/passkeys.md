@@ -7,7 +7,10 @@ A signed-in person can see, rename and revoke the passkeys on their account.
 `GET /u/{n}/passkeys` (under the issuer's path prefix, if it has one) lists the
 account's passkeys: the name, the passkey provider it came from, when it was
 created and when it was last used. Each has a rename field and a remove button.
-The home and profile pages link to it.
+The home and profile pages link to it. With `PASSWORDS=allow` the same page has
+a Password section ([passwords.md](passwords.md)), and every deployment's page
+has an **Add a passkey** link, which runs the email-code sign-in on the device
+so it can create one.
 
 Sites that want to send someone there link to `{issuer}/passkeys`, which
 redirects to the default account's page (or to sign-in first), the way
@@ -37,7 +40,7 @@ The two POSTs need `Content-Type: application/json` and a request from the
 provider's own origin (`Origin`, or `Referer`), as the profile and sign-in
 endpoints do. No session is 401 `login_required`.
 
-Revoke also needs a passkey ceremony within the last ten minutes
+Revoke also needs a sign-in (a passkey, or the account's password) within the last ten minutes
 (`provider.ReauthWindow`), so a stolen session cookie cannot remove the holder's
 way back in: `403 reauthentication_required`, which the page answers by signing
 in again and retrying, as the email page does. A session signed in with a
@@ -47,10 +50,14 @@ passkey enrolled through recovery cannot revoke for a week:
 Statuses: `400` for a bad name, `404 not_found` for a passkey that does not
 exist **or belongs to another account** (the same answer, so an id never
 reveals itself), and `409 cannot_revoke_last_passkey` when it is the account's
-only one. With no password to fall back on, removing the last passkey locks the
-person out, so it is refused. The check is race-safe: revoke locks the
-account's credential rows (`SELECT ... FOR UPDATE`) and counts and deletes in
-one transaction, so two simultaneous revokes of the last two leave one. A
+only one and the account has no password. With nothing to fall back on,
+removing the last passkey locks the person out, so it is refused. An account
+with a password (`PASSWORDS=allow`, [passwords.md](passwords.md)) may revoke its
+last passkey; its password then becomes the last credential and cannot be
+removed. The check is race-safe: revoke locks the account's credential rows
+(`SELECT ... FOR UPDATE`), then its password row, and counts and deletes in one
+transaction, so two simultaneous revokes of the last two leave one, and so do a
+revoke and a password removal. A
 passkey that is not the caller's is a 404 before the last-passkey rule is
 considered.
 

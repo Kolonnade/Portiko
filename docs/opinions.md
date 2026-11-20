@@ -16,9 +16,15 @@ The OpenID Foundation's conformance suite runs before a release goes out. "It wo
 
 ## Passkeys are the credential
 
-There are no passwords to store, reset or leak. A one-time code by email exists for enrollment and recovery and is never a way to sign in on its own.
+There are no passwords to store, reset or leak — unless a deployment turns on the one exception below. A one-time code by email exists for enrollment and recovery and is never a way to sign in on its own.
 
 The rules that cost other implementations dearly are built in: Backup Eligible is immutable after registration, Backup State is not; a synced passkey reports a sign count of zero forever and that is normal; a counter never moves backwards; challenges live in the database and are consumed in the same statement that reads them.
+
+### The exception: an opt-in password
+
+Some people cannot use a passkey at all; an old computer whose browser has no WebAuthn is enough. Rather than leave them out, a deployment may set `PASSWORDS=allow` and let an account hold a password. It is **off by default**, and Portiko stays passkey-only unless a deployment chooses otherwise.
+
+Where it is on, passkeys stay the recommended credential: the page offers **Create a passkey** first and the password second, a password-only account can add a passkey and drop the password, and tokens say which was used (`amr` is `pwd`) so a site can ask for more. The password follows NIST SP 800-63B — fifteen characters or more, no composition rules, checked against common passwords without any network call — is stored with Argon2id, and is bounded by the rate limits plus a per-account backoff. The emailed code still never signs anybody in; it can only lead to a passkey or a password being set. See [passwords.md](passwords.md).
 
 ## One token, one subject, one audience
 

@@ -33,6 +33,8 @@ The hook runs synchronously on the request goroutine, so a slow hook slows sign-
 | `passkey_create_finished` | `register/finish` answers, or the page reports the dialog failed | `parse_error`, `verify_failed`, `too_many_accounts`, `server_error`, or the browser's `DOMException` name |
 | `passkey_signin_started` | `login/start` answers | `start_failed`, `rate_limited` |
 | `passkey_signin_finished` | `login/finish` answers, or the page reports the dialog failed | as for `passkey_create_finished`, plus `rate_limited` and `unknown_credential` |
+| `password_set` | `register/password` answers (`PASSWORDS=allow`) | `bad_request`, `weak_password`, `verify_failed`, `too_many_accounts`, `server_error` |
+| `password_signin_finished` | `login/password` answers | `bad_request`, `verify_failed`, `too_many_accounts`, `server_error`, `rate_limited` |
 | `redirected` | the person is sent back to a site | `account_mismatch`, `complete_failed`, `request_expired` (sent back with `login_required` to start again), or the OpenID Connect error (`login_required`, `access_denied`, …) |
 
 A signed-in person's changes to their account's addresses ([emails.md](emails.md)) are reported too. They carry no flow or client.

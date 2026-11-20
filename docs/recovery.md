@@ -59,12 +59,12 @@ This doubles as a legacy path: the same mechanism lets a family recover an accou
 
 Whatever gates it — a code, a link, a quorum of trusted people — the ceremony that follows is the same, and it is deliberately narrow:
 
-- It is **a registration ceremony that attaches a credential to an existing subject**.
+- It is **a registration ceremony that attaches a credential to an existing subject**. With `PASSWORDS=allow` that credential may be a password instead of a passkey: the forgotten-password path, which sets the account's password or replaces the one it had, and leaves its passkeys alone ([passwords.md](passwords.md)). An account with only a password recovers the same way and can choose a passkey.
 - It creates no account and changes no other state.
 - It uses a longer window than enrollment (15 minutes against 5), because it starts from a message read on another device.
 - It is **never gated by whether registration is open.** A closed deployment that gates recovery locks its own users out permanently, and leaves the first administrator unable to enroll at all.
 - On its own it does **not** revoke existing credentials. The legitimate holder may still have a working passkey, and automatic revocation hands an attacker a way to lock them out. The trusted-people transfer is the exception, because revoking is the point of a transfer and the veto window has already run.
-- The credential it enrolls is **held for a week**: a session signed in with it cannot change the primary address, remove an address or revoke a passkey until then. Otherwise whoever reads one backup inbox could strip the holder of every way back in before the notices were read ([emails.md](emails.md#the-recovery-hold)).
+- The credential it enrolls is **held for a week**: a session signed in with it cannot change the primary address, remove an address, revoke a passkey, or change or remove the password until then. A password set through recovery is held exactly as a passkey is. Otherwise whoever reads one backup inbox could strip the holder of every way back in before the notices were read ([emails.md](emails.md#the-recovery-hold)).
 
 ### 6. The operator, for self-hosted deployments
 
@@ -88,7 +88,7 @@ Whoever runs the server has database access, so they can always restore an accou
 - **Loud.** A recovery attempt notifies every verified identifier and every live session. A completed one does the same and writes an audit row. A takeover people can see is a takeover they can report.
 - **Held when the ground is fresh.** A hold — announced to every identifier — applies when recovery arrives through an identifier that was added or changed recently, which is the shape of an account takeover. It does **not** apply on the ordinary path of a long-verified address, because delaying that punishes the person you are trying to help. The trusted-people path always holds, by design.
 - **Narrow.** Recovery adds a credential. Only the trusted-people transfer changes identifiers, and it says so in every message it sends.
-- **The last credential is protected.** An account cannot delete its only passkey unless recovery codes or trusted people exist, because with no password to fall back on that is not an inconvenience, it is a permanently unreachable account.
+- **The last credential is protected.** An account cannot delete its only credential — its only passkey, or with `PASSWORDS=allow` its password when it has no passkey — unless recovery codes or trusted people exist, because with nothing to fall back on that is not an inconvenience, it is a permanently unreachable account.
 
 ## What breaks without each rule
 
