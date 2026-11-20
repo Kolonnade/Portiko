@@ -11,7 +11,7 @@ import (
 const (
 	// AuditCredentialAdded records a passkey enrolled onto an account.
 	AuditCredentialAdded = "credential.added"
-	// AuditAccountRecovered records a passkey enrolled onto an account that
+	// AuditAccountRecovered records a passkey enrolled, or a password set, on an account that
 	// already existed, by way of reading its email — the recovery path.
 	AuditAccountRecovered = "account.recovered"
 	// AuditCredentialRenamed records a passkey renamed by its holder.
@@ -25,6 +25,14 @@ const (
 	AuditEmailRemoved = "email.removed"
 	// AuditEmailPrimaryChanged records another address becoming the primary.
 	AuditEmailPrimaryChanged = "email.primary_changed"
+	// AuditPasswordSet records a password given to an account that had none,
+	// at enrollment, through recovery or from the account page.
+	AuditPasswordSet = "password.set"
+	// AuditPasswordChanged records an account's password replaced with
+	// another, from the account page or through recovery.
+	AuditPasswordChanged = "password.changed"
+	// AuditPasswordRemoved records a password taken off an account.
+	AuditPasswordRemoved = "password.removed"
 	// AuditRefreshReuse records a rotated refresh token being presented again.
 	AuditRefreshReuse = "refresh.reuse_detected"
 )

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -170,9 +171,10 @@ type RevokedCredential struct {
 	UserHandle []byte
 }
 
-// Revoke deletes a credential, refusing to remove the account's last one.
+// Revoke deletes a credential, refusing to remove the account's last one
+// unless the account has a password to sign in with instead.
 //
-// With no password to fall back on, removing the final passkey is not an
+// With nothing to fall back on, removing the final passkey is not an
 // inconvenience — it is a permanently unreachable account. The account's
 // credential rows are locked (FOR UPDATE) before they are counted, and the
 // count and the delete run in one transaction, so two concurrent revokes
@@ -220,7 +222,18 @@ func (d *DB) Revoke(ctx context.Context, userID, credentialID int64) (*RevokedCr
 		return nil, ErrNotFound
 	}
 	if n <= 1 {
-		return nil, ErrLastCredential
+		// The last passkey may go only when a password is left to sign in
+		// with. Its row is locked too, after the passkeys and in the order
+		// RemovePassword takes them, so the two cannot each leave the other
+		// as the account's only credential and then both go.
+		var one int
+		err := tx.QueryRow(ctx, `SELECT 1 FROM passwords WHERE user_id = $1 FOR UPDATE`, userID).Scan(&one)
+		if errors.Is(norm(err), ErrNotFound) {
+			return nil, ErrLastCredential
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM passkey_credentials WHERE id = $1 AND user_id = $2`, credentialID, userID); err != nil {

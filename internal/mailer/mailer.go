@@ -14,8 +14,8 @@ import (
 
 // Mailer sends the messages the provider owes an account holder: the one-time
 // code that starts a ceremony or confirms an address, the notice that a passkey
-// was added to an account that already existed, and the notice that the
-// account's addresses changed.
+// was added to an account that already existed, the notice that the
+// account's addresses changed, and the notice that its password changed.
 //
 // The notice is a required method rather than an optional extra. Email is the
 // root of trust for recovery — proving you can read the inbox is enough to
@@ -27,6 +27,35 @@ type Mailer interface {
 	SendCode(to, code string) error
 	SendPasskeyAdded(to string, n PasskeyNotice) error
 	SendEmailChanged(to string, n EmailNotice) error
+	SendPasswordChanged(to string, n PasswordNotice) error
+}
+
+// PasswordChange names what happened to an account's password.
+type PasswordChange string
+
+const (
+	// PasswordAdded: the account had no password and now has one.
+	PasswordAdded PasswordChange = "added"
+	// PasswordReplaced: the account's password was replaced with another.
+	PasswordReplaced PasswordChange = "changed"
+	// PasswordRemoved: the account no longer has a password.
+	PasswordRemoved PasswordChange = "removed"
+)
+
+// PasswordNotice describes a change to an account's password (PASSWORDS=allow).
+// It is sent to the account's primary address, for every change but the one
+// that created the account.
+type PasswordNotice struct {
+	// When the change was made.
+	When time.Time
+	// Change is what happened.
+	Change PasswordChange
+	// Recovery is true when the password was set by recovering the account
+	// with an emailed code, rather than from the account page while signed in.
+	Recovery bool
+	// ReviewURL is where the holder can see the account's passkeys and
+	// password. As with the other notices, there is no link that undoes it.
+	ReviewURL string
 }
 
 // EmailChange names what happened to an account's addresses.
@@ -98,6 +127,12 @@ func (s *Stdout) SendEmailChanged(to string, n EmailNotice) error {
 	return nil
 }
 
+func (s *Stdout) SendPasswordChanged(to string, n PasswordNotice) error {
+	slog.Warn("email not configured; printing the password notice instead",
+		"to", to, "change", string(n.Change), "recovery", n.Recovery, "when", n.When, "review", n.ReviewURL)
+	return nil
+}
+
 // TestDomains writes messages for a few test domains to the log and passes
 // every other message to Next.
 //
@@ -134,6 +169,15 @@ func (t *TestDomains) SendEmailChanged(to string, n EmailNotice) error {
 		return nil
 	}
 	return t.Next.SendEmailChanged(to, n)
+}
+
+func (t *TestDomains) SendPasswordChanged(to string, n PasswordNotice) error {
+	if t.match(to) {
+		slog.Warn("test mail domain; not sending, logging instead",
+			"to", to, "change", string(n.Change), "recovery", n.Recovery, "when", n.When, "review", n.ReviewURL)
+		return nil
+	}
+	return t.Next.SendPasswordChanged(to, n)
 }
 
 func (t *TestDomains) match(to string) bool {
@@ -235,6 +279,43 @@ func (m *SMTP) SendEmailChanged(to string, n EmailNotice) error {
 		"account:\r\n\r\n"+
 		"  %s\r\n",
 		what, n.When.UTC().Format("2 January 2006 at 15:04 UTC"), n.ReviewURL)
+	return m.send(to, subject, body)
+}
+
+// SendPasswordChanged tells the holder that the account's password changed.
+//
+// Like the other notices it says what happened and asks for no click.
+func (m *SMTP) SendPasswordChanged(to string, n PasswordNotice) error {
+	if ok, err := m.custom(to, TemplatePasswordChanged, PasswordChangedData{ServiceName: m.ServiceName, PasswordNotice: n}); ok {
+		return err
+	}
+	var what, subject string
+	switch n.Change {
+	case PasswordRemoved:
+		what = fmt.Sprintf("The password was removed from your %s account. It can no longer\r\n"+
+			"be used to sign in; your passkeys still can.", m.ServiceName)
+		subject = "The password on your " + m.ServiceName + " account was removed"
+	case PasswordReplaced:
+		what = fmt.Sprintf("The password of your %s account was changed. The old one no longer\r\n"+
+			"signs in.", m.ServiceName)
+		subject = "The password of your " + m.ServiceName + " account was changed"
+	default:
+		what = fmt.Sprintf("A password was added to your %s account. It can sign in to your\r\n"+
+			"account from now on.", m.ServiceName)
+		subject = "A password was added to your " + m.ServiceName + " account"
+	}
+	how := ""
+	if n.Recovery {
+		how = "It was done with a sign-in code sent to an address on the account.\r\n"
+	}
+	body := fmt.Sprintf(""+
+		"%s\r\n%s\r\n"+
+		"This happened on %s. If you made this change, there is nothing to do.\r\n\r\n"+
+		"If you did not, then somebody who can read one of your addresses or who\r\n"+
+		"was signed in to your account made it. Sign in and review your passkeys\r\n"+
+		"and password:\r\n\r\n"+
+		"  %s\r\n",
+		what, how, n.When.UTC().Format("2 January 2006 at 15:04 UTC"), n.ReviewURL)
 	return m.send(to, subject, body)
 }
 

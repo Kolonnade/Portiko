@@ -32,6 +32,7 @@ var endpointLimits = map[string]limit{
 	"register.verify": codeVerifications,
 	"login.start":     loginStarts,
 	"login.finish":    loginFinishes,
+	"login.password":  passwordSignIns,
 	"oauth.token":     tokenRequests,
 	"signin.event":    signInEvents,
 	// Adding an address sends a code to it and checks one, so it gets the same
@@ -80,8 +81,12 @@ func Router(d Deps) http.Handler {
 	api.HandleFunc("POST /accounts/v1/register/start", limited("register.start", emailFromBody, d.Auth.StartRegistration))
 	api.HandleFunc("POST /accounts/v1/register/verify", limited("register.verify", emailFromBody, d.Auth.VerifyCode))
 	api.HandleFunc("POST /accounts/v1/register/finish", d.Auth.FinishRegistration)
+	// The password stands in for the passkey at the end of a verified code, so
+	// it needs no budget of its own: the token it carries is single-use.
+	api.HandleFunc("POST /accounts/v1/register/password", d.Auth.RegisterPassword)
 	api.HandleFunc("GET /accounts/v1/login/start", limited("login.start", emailFromQuery, d.Auth.StartLogin))
 	api.HandleFunc("POST /accounts/v1/login/finish", limited("login.finish", nil, d.Auth.FinishLogin))
+	api.HandleFunc("POST /accounts/v1/login/password", limited("login.password", emailFromBody, d.Auth.LoginPassword))
 	api.HandleFunc("POST /accounts/v1/logout", d.Auth.Logout)
 	api.HandleFunc("POST /accounts/v1/logout/all", d.Auth.LogoutAll)
 	api.HandleFunc("POST /accounts/v1/default", d.Auth.SetDefault)
@@ -89,6 +94,9 @@ func Router(d Deps) http.Handler {
 	api.HandleFunc("GET /accounts/v1/passkeys", d.Auth.ListPasskeys)
 	api.HandleFunc("POST /accounts/v1/passkeys/{id}/rename", d.Auth.RenamePasskey)
 	api.HandleFunc("POST /accounts/v1/passkeys/{id}/revoke", d.Auth.RevokePasskey)
+	api.HandleFunc("GET /accounts/v1/password", d.Auth.GetPassword)
+	api.HandleFunc("POST /accounts/v1/password", d.Auth.SetPassword)
+	api.HandleFunc("POST /accounts/v1/password/remove", d.Auth.RemovePassword)
 	api.HandleFunc("GET /accounts/v1/emails", d.Auth.ListEmails)
 	api.HandleFunc("POST /accounts/v1/emails/add", limited("emails.add", emailFromBody, d.Auth.AddEmail))
 	api.HandleFunc("POST /accounts/v1/emails/verify", limited("emails.verify", emailFromBody, d.Auth.VerifyEmail))

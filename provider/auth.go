@@ -93,7 +93,8 @@ func (h *Auth) StartRegistration(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "code_sent"})
 }
 
-// VerifyCode: POST /accounts/v1/register/verify {"email","code"} → creation options.
+// VerifyCode: POST /accounts/v1/register/verify {"email","code"} → creation
+// options, and with PASSWORDS=allow a password_token for register/password.
 func (h *Auth) VerifyCode(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email string `json:"email"`
@@ -111,7 +112,13 @@ func (h *Auth) VerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 	h.emit(r, StageCodeVerified, OutcomeOK, "")
 	h.emit(r, StagePasskeyCreateStarted, OutcomeOK, "")
-	writeJSON(w, map[string]any{"purpose": res.Purpose, "creation_options": res.Options})
+	out := map[string]any{"purpose": res.Purpose, "creation_options": res.Options}
+	if h.cfg.PasswordsAllowed() {
+		// The other way to finish: register/password with this token sets a
+		// password instead of creating a passkey.
+		out["password_token"] = res.Token
+	}
+	writeJSON(w, out)
 }
 
 // FinishRegistration: POST /accounts/v1/register/finish[?authRequestID=]

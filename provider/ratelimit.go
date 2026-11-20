@@ -60,6 +60,13 @@ var (
 	// guessed, so this bounds the signature verification work.
 	loginFinishes = limit{perIP: 120, window: time.Hour}
 
+	// passwordSignIns bounds password guesses. A password, unlike an
+	// assertion, can be guessed, so this has a per-address budget like the
+	// code's: ten an hour for one address is a person who forgot which
+	// password they chose, not somebody working through a list. Behind it sits
+	// the per-account backoff in the store, which every address shares.
+	passwordSignIns = limit{perAddress: 10, perIP: 60, window: time.Hour}
+
 	// tokenRequests bounds the OAuth token endpoint. It is deliberately the
 	// loosest of the lot: the callers are relying parties, not browsers, and they
 	// all arrive from the same handful of addresses — often one, when the sites run

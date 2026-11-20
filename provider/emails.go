@@ -14,8 +14,9 @@ import (
 	kitprotocol "github.com/Kolonnade/Portiko/protocol"
 )
 
-// ReauthWindow is how recently an account must have completed a passkey
-// ceremony in this browser to add an address, remove one or change the primary.
+// ReauthWindow is how recently an account must have signed in in this browser,
+// with a passkey or (PASSWORDS=allow) its password, to add an address, remove
+// one or change the primary, or to change its passkeys or password.
 //
 // A session cookie alone is not enough for these. Each one decides which
 // inboxes can recover the account, so a borrowed laptop or a stolen cookie that
@@ -74,13 +75,13 @@ const (
 func refuse(w http.ResponseWriter, a *account, g guard) string {
 	if g >= guardReauth && time.Since(a.AuthenticatedAt) > ReauthWindow {
 		writeError(w, http.StatusForbidden, &kitprotocol.Error{Code: errReauthRequired,
-			Description: "sign in with your passkey again to make this change"})
+			Description: "sign in again to make this change"})
 		return errReauthRequired
 	}
 	if g >= guardHeld && heldUntil(&a.Session) != nil {
 		writeError(w, http.StatusForbidden, &kitprotocol.Error{Code: errRecoveryHold,
-			Description: "this passkey was added by recovering the account, so for a week it cannot remove addresses, " +
-				"change the primary address or remove passkeys; sign in with a passkey you had before to do it now"})
+			Description: "you signed in with a passkey or password set by recovering the account, so for a week it cannot " +
+				"remove addresses, change the primary address, or remove passkeys or the password; sign in with one you had before to do it now"})
 		return errRecoveryHold
 	}
 	return ""

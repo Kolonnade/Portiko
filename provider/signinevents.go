@@ -28,7 +28,11 @@ const (
 	StagePasskeyCreateDone    SignInStage = "passkey_create_finished"
 	StagePasskeySignInStarted SignInStage = "passkey_signin_started"
 	StagePasskeySignInDone    SignInStage = "passkey_signin_finished"
-	StageRedirected           SignInStage = "redirected"
+	// The password credential (PASSWORDS=allow): a password chosen instead of
+	// a passkey after the code, and a sign-in with one.
+	StagePasswordSet        SignInStage = "password_set"
+	StagePasswordSignInDone SignInStage = "password_signin_finished"
+	StageRedirected         SignInStage = "redirected"
 )
 
 // Account stages: changes a signed-in person makes to their account's email
@@ -152,6 +156,8 @@ func (h *Auth) limitedEvent(r *http.Request, endpoint string) {
 		stage = StagePasskeySignInStarted
 	case "login.finish":
 		stage = StagePasskeySignInDone
+	case "login.password":
+		stage = StagePasswordSignInDone
 	case "emails.add", "emails.verify":
 		stage = StageEmailAdded
 	default:

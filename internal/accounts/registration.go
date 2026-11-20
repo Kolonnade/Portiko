@@ -113,6 +113,10 @@ func (s *Service) checkPolicy(ctx context.Context, email string) error {
 }
 
 // VerifiedRegistration is the result of exchanging a code for a ceremony.
+//
+// Token names the verified code. It finishes the ceremony with a password
+// instead of a passkey (FinishPasswordEnrollment), so it is handed to the
+// caller only when passwords are allowed.
 type VerifiedRegistration struct {
 	Token   string
 	Email   string
@@ -153,13 +157,23 @@ func (s *Service) VerifyCode(ctx context.Context, email, code string) (*Verified
 			return nil, ErrAuthFailed
 		}
 		creds, err := s.db.ByUser(ctx, existing.ID)
-		if err != nil || len(creds) == 0 {
+		if err != nil {
 			logStep(ctx, "register: loading credentials for recovery", err)
 			return nil, ErrAuthFailed
 		}
+		handle := []byte(nil)
+		if len(creds) > 0 {
+			handle = creds[0].UserHandle
+		} else {
+			// An account with a password and no passkey yet: its first
+			// passkey gets the account's first handle.
+			if handle, err = passkey.NewUserHandle(); err != nil {
+				return nil, err
+			}
+		}
 		name := s.passkeyName(existing)
 		user = &passkey.User{
-			ID: existing.ID, Handle: creds[0].UserHandle,
+			ID: existing.ID, Handle: handle,
 			Name: name, Display: name,
 		}
 	default:

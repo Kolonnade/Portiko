@@ -16,7 +16,8 @@ import (
 
 // Mailer delivers the provider's messages: the one-time code that starts a
 // ceremony or confirms an address, the notice that a passkey was added to an
-// existing account, and the notice that an account's addresses changed.
+// existing account, the notice that an account's addresses changed, and the
+// notice that its password changed.
 // Implement it to send through something other than SMTP; every method is
 // required, because a deployment that changes an account silently gives the
 // holder no way to notice a compromised mailbox.
@@ -34,6 +35,20 @@ type PasskeyNotice = mailer.PasskeyNotice
 // removed, or another made primary. It is sent to every address on the account
 // and to the one removed.
 type EmailNotice = mailer.EmailNotice
+
+// PasswordNotice describes a change to an account's password: one added,
+// replaced or removed (PASSWORDS=allow). It is sent to the primary address.
+type PasswordNotice = mailer.PasswordNotice
+
+// PasswordChange names what a PasswordNotice reports.
+type PasswordChange = mailer.PasswordChange
+
+// The changes a PasswordNotice reports.
+const (
+	PasswordAdded    = mailer.PasswordAdded
+	PasswordReplaced = mailer.PasswordReplaced
+	PasswordRemoved  = mailer.PasswordRemoved
+)
 
 // EmailChange names what an EmailNotice reports.
 type EmailChange = mailer.EmailChange

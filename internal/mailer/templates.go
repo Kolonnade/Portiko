@@ -17,6 +17,9 @@ const (
 	TemplateCode         = "mail-code.txt"
 	TemplatePasskeyAdded = "mail-passkey-added.txt"
 	TemplateEmailChanged = "mail-email-changed.txt"
+	// TemplatePasswordChanged is the password notice. Change is "added",
+	// "changed" or "removed"; Recovery says whether an emailed code did it.
+	TemplatePasswordChanged = "mail-password-changed.txt"
 )
 
 // CodeData is what mail-code.txt is executed with.
@@ -38,6 +41,12 @@ type EmailChangedData struct {
 	EmailNotice
 }
 
+// PasswordChangedData is what mail-password-changed.txt is executed with.
+type PasswordChangedData struct {
+	ServiceName string
+	PasswordNotice
+}
+
 // Templates are a deployment's own wording for the messages SMTP sends.
 type Templates struct{ t *template.Template }
 
@@ -57,16 +66,17 @@ func LoadTemplates(dir string) (*Templates, error) {
 	ts := &Templates{t: t}
 	when := time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC)
 	samples := map[string]any{
-		TemplateCode:         CodeData{ServiceName: "Example", Code: "123456"},
-		TemplatePasskeyAdded: PasskeyAddedData{ServiceName: "Example", PasskeyNotice: PasskeyNotice{When: when, ReviewURL: "https://id.example/passkeys"}},
-		TemplateEmailChanged: EmailChangedData{ServiceName: "Example", EmailNotice: EmailNotice{When: when, Change: EmailAdded, Address: "a@example.com", ReviewURL: "https://id.example/emails"}},
+		TemplateCode:            CodeData{ServiceName: "Example", Code: "123456"},
+		TemplatePasskeyAdded:    PasskeyAddedData{ServiceName: "Example", PasskeyNotice: PasskeyNotice{When: when, ReviewURL: "https://id.example/passkeys"}},
+		TemplateEmailChanged:    EmailChangedData{ServiceName: "Example", EmailNotice: EmailNotice{When: when, Change: EmailAdded, Address: "a@example.com", ReviewURL: "https://id.example/emails"}},
+		TemplatePasswordChanged: PasswordChangedData{ServiceName: "Example", PasswordNotice: PasswordNotice{When: when, Change: PasswordAdded, ReviewURL: "https://id.example/passkeys"}},
 	}
 	for _, m := range matches {
 		name := filepath.Base(m)
 		data, known := samples[name]
 		if !known {
-			return nil, fmt.Errorf("mailer: templates: %s is not a message (want %s, %s or %s)",
-				name, TemplateCode, TemplatePasskeyAdded, TemplateEmailChanged)
+			return nil, fmt.Errorf("mailer: templates: %s is not a message (want %s, %s, %s or %s)",
+				name, TemplateCode, TemplatePasskeyAdded, TemplateEmailChanged, TemplatePasswordChanged)
 		}
 		if _, _, _, err := ts.render(name, data); err != nil {
 			return nil, err
