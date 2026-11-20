@@ -180,3 +180,32 @@ func TestLoadMaxEmails(t *testing.T) {
 		}
 	}
 }
+
+// Passwords are off unless a deployment says allow; anything else stops Load,
+// and a hand-built Config with an unknown value is off.
+func TestLoadPasswords(t *testing.T) {
+	t.Setenv("ISSUER", "https://example.com")
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("WEBAUTHN_RP_ID", "example.com")
+	t.Setenv("WEBAUTHN_RP_ORIGINS", "https://example.com")
+	t.Setenv("CRYPTO_KEY", strings.Repeat("ab", 32))
+	t.Setenv("REGISTRATION", "closed")
+	t.Setenv("BOOTSTRAP_CODE", "")
+
+	for v, want := range map[string]bool{"": false, "off": false, "allow": true, "Allow": true, " allow ": true} {
+		t.Setenv("PASSWORDS", v)
+		c, err := Load()
+		if err != nil || c.PasswordsAllowed() != want {
+			t.Errorf("PASSWORDS=%q: allowed %v err %v, want %v", v, c != nil && c.PasswordsAllowed(), err, want)
+		}
+	}
+	for _, bad := range []string{"on", "true", "yes", "1"} {
+		t.Setenv("PASSWORDS", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PASSWORDS") {
+			t.Errorf("PASSWORDS=%q must stop Load, got %v", bad, err)
+		}
+	}
+	if (&Config{}).PasswordsAllowed() || (&Config{Passwords: "on"}).PasswordsAllowed() {
+		t.Error("a hand-built Config must not allow passwords unless it says allow")
+	}
+}

@@ -119,6 +119,13 @@ type Config struct {
 	// primary included. Zero means DefaultMaxEmails.
 	MaxEmails int
 
+	// Passwords says whether an account may hold a password as well as, or
+	// instead of, passkeys: PasswordsAllow or PasswordsOff. Off by default.
+	// Passkeys stay the recommended credential; a password exists for the
+	// person whose device cannot use one (docs/opinions.md). Turning it off
+	// again stops every password from signing in, and leaves the rows in place.
+	Passwords string
+
 	base    string // BasePath, validated by Load
 	baseSet bool
 }
@@ -142,6 +149,16 @@ const (
 	RegistrationCode   = "code"
 	RegistrationClosed = "closed"
 )
+
+// Password settings; see Config.Passwords.
+const (
+	PasswordsOff   = "off"
+	PasswordsAllow = "allow"
+)
+
+// PasswordsAllowed reports whether passwords may be set and used to sign in.
+// Anything but PasswordsAllow is off, so a typo never turns them on.
+func (c *Config) PasswordsAllowed() bool { return c.Passwords == PasswordsAllow }
 
 // BasePath is the path the provider is served under, taken from the issuer:
 // "/id" for https://go.example.com/id, and "" when the issuer has no path. It
@@ -230,6 +247,7 @@ func Load() (*Config, error) {
 		DevInsecure:   os.Getenv("DEV_INSECURE") == "true",
 
 		Registration: os.Getenv("REGISTRATION"),
+		Passwords:    strings.ToLower(strings.TrimSpace(os.Getenv("PASSWORDS"))),
 	}
 
 	var problems []string
@@ -252,6 +270,14 @@ func Load() (*Config, error) {
 		}
 	default:
 		problems = append(problems, "REGISTRATION must be open, code or closed")
+	}
+
+	switch c.Passwords {
+	case "":
+		c.Passwords = PasswordsOff
+	case PasswordsOff, PasswordsAllow:
+	default:
+		problems = append(problems, "PASSWORDS must be allow or off")
 	}
 
 	if v := os.Getenv("PORT"); v != "" {

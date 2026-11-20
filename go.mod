@@ -11,6 +11,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/sethvargo/go-limiter v1.2.0
 	github.com/zitadel/oidc/v3 v3.51.1
+	golang.org/x/crypto v0.57.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/text v0.42.0
 )
@@ -41,7 +42,6 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 )
