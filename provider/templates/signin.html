@@ -18,7 +18,17 @@
 
 <div id="passkey" class="step on">
   <button id="usePasskey">Use a passkey</button>
-  <p class="muted">Or <a href="#" id="showEmail">sign in with your email</a>.</p>
+  {{if .Passwords}}
+  <form id="passwordSignIn">
+    <p class="muted">Or sign in with your password.</p>
+    <label for="pwEmail">Email</label>
+    <input id="pwEmail" name="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Sign in with password</button>
+  </form>
+  {{end}}
+  <p class="muted">{{if .Passwords}}New here, or forgot your password?{{else}}Or{{end}} <a href="#" id="showEmail">sign in with your email</a>.</p>
   {{if .Adding}}<p class="muted"><a href="{{.Base}}/">Back to your accounts</a></p>{{end}}
 </div>
 
@@ -37,6 +47,27 @@
   <button id="verify">Continue</button>
 </div>
 
+{{if .Passwords}}
+<div id="chooseStep" class="step">
+  <p>Choose how you will sign in from now on.</p>
+  <button id="choosePasskey">Create a passkey</button>
+  <p class="muted">Recommended: nothing to remember, and it cannot be phished.</p>
+  <button id="choosePassword" type="button">Set a password</button>
+  <p class="muted">For a device that cannot use passkeys.</p>
+</div>
+
+<div id="setPasswordStep" class="step">
+  <form id="setPasswordForm">
+    <input type="email" id="newPasswordEmail" autocomplete="username" hidden>
+    <label for="newPassword">New password</label>
+    <input id="newPassword" type="password" autocomplete="new-password" minlength="{{.MinPassword}}" required>
+    <p class="muted">At least {{.MinPassword}} characters. A few ordinary words with spaces between them is fine.</p>
+    <button type="submit">Save password and continue</button>
+  </form>
+  <p class="muted"><a href="#" id="backToChoice">Create a passkey instead</a></p>
+</div>
+{{end}}
+
 <p class="msg" id="msg" role="status"></p>
 
 <script>
@@ -53,6 +84,7 @@ const AUTH_REQUEST = {{.AuthRequestID}};
 const RETURN_TO = {{.ReturnTo}};
 const ADDING = {{.Adding}};
 const CREATE = {{.Create}};
+const PASSWORDS = {{.Passwords}};
 // FLOW ties this attempt's steps together for the deployment's sign-in events;
 // EVENTS says whether anything is listening.
 const FLOW = {{.FlowID}};
@@ -137,11 +169,27 @@ document.getElementById('verify').onclick = async () => {
   });
   if (!r.ok) { msg('That code did not work.'); return; }
 
-  const options = (await r.json()).creation_options.publicKey;
+  const verified = await r.json();
+  const options = verified.creation_options.publicKey;
   options.challenge = b64uToBuf(options.challenge);
   options.user.id = b64uToBuf(options.user.id);
   (options.excludeCredentials || []).forEach(c => c.id = b64uToBuf(c.id));
 
+  if (PASSWORDS && verified.password_token) {
+    // The person chooses: a passkey first and recommended, or a password.
+    passwordToken = verified.password_token;
+    creationOptions = options;
+    document.getElementById('newPasswordEmail').value = email;
+    msg('');
+    show('chooseStep');
+    return;
+  }
+  await createPasskey(options);
+};
+
+let passwordToken = null, creationOptions = null;
+
+async function createPasskey(options) {
   msg('Create a passkey to finish.');
   try {
     const cred = await navigator.credentials.create({ publicKey: options, signal: freshSignal() });
@@ -154,9 +202,30 @@ document.getElementById('verify').onclick = async () => {
     });
   } catch (e) {
     report('passkey_create_finished', e);
-    msg('Could not create a passkey on this device.');
+    msg(PASSWORDS && passwordToken ? 'Could not create a passkey on this device. You can set a password instead.'
+      : 'Could not create a passkey on this device.');
   }
-};
+}
+
+if (PASSWORDS) {
+  document.getElementById('choosePasskey').onclick = () => createPasskey(creationOptions);
+  document.getElementById('choosePassword').onclick = () => { msg(''); show('setPasswordStep'); };
+  document.getElementById('backToChoice').onclick = e => { e.preventDefault(); show('chooseStep'); };
+  document.getElementById('setPasswordForm').onsubmit = async e => {
+    e.preventDefault();
+    msg('Saving…');
+    const password = document.getElementById('newPassword').value;
+    await finish('{{.Base}}/accounts/v1/register/password', { token: passwordToken, password });
+  };
+  document.getElementById('passwordSignIn').onsubmit = async e => {
+    e.preventDefault();
+    msg('Signing in…');
+    await finish('{{.Base}}/accounts/v1/login/password', {
+      email: document.getElementById('pwEmail').value.trim(),
+      password: document.getElementById('password').value,
+    });
+  };
+}
 
 async function finish(url, body) {
   const r = await fetch(url + flowQuery, {
@@ -177,6 +246,9 @@ async function finish(url, body) {
   if (!r.ok) {
     msg(out.error === 'too_many_accounts'
       ? 'This browser already holds as many accounts as it can. Sign out of one first.'
+      : out.error === 'weak_password' ? out.error_description
+      : out.error === 'rate_limited' ? 'Too many attempts. Wait a while and try again.'
+      : url.endsWith('/login/password') ? 'That email and password did not work. After several tries, wait a few minutes.'
       : 'Sign-in failed.');
     return;
   }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -659,4 +660,68 @@ func (h *harness) siteSessionFor(s *site, c *http.Client) *session.Session {
 	}
 	h.t.Fatal("the site set no session cookie")
 	return nil
+}
+
+func TestPagesOfferThePasswordWhenAllowed(t *testing.T) {
+	h := newPasswordHarness(t)
+	signin := bodyString(t, h.get("/signin"))
+	for _, want := range []string{`id="passwordSignIn"`, `autocomplete="current-password"`, `id="chooseStep"`,
+		`id="choosePasskey"`, `id="choosePassword"`, `autocomplete="new-password"`, `const PASSWORDS =  true `} {
+		if !strings.Contains(signin, want) {
+			t.Errorf("sign-in page lacks %q", want)
+		}
+	}
+	// The passkey comes first: it is the recommended one.
+	if strings.Index(signin, `id="choosePasskey"`) > strings.Index(signin, `id="choosePassword"`) {
+		t.Error("the password is offered before the passkey")
+	}
+
+	n := h.register("pages@example.com")
+	page := bodyString(t, h.get("/u/"+strconv.Itoa(n)+"/passkeys"))
+	for _, want := range []string{"<h2>Password</h2>", `id="passwordForm"`, "Add a password", "const REAUTH_PASSWORD =  false "} {
+		if !strings.Contains(page, want) {
+			t.Errorf("passkeys page lacks %q", want)
+		}
+	}
+	if strings.Contains(page, `id="removePassword"`) {
+		t.Error("an account with no password is offered to remove one")
+	}
+	if status, _, raw := h.call("/accounts/v1/password", map[string]any{"account": n, "password": goodPassword}); status != http.StatusOK {
+		t.Fatalf("add a password: %d %s", status, raw)
+	}
+	page = bodyString(t, h.get("/u/"+strconv.Itoa(n)+"/passkeys"))
+	for _, want := range []string{"Change password", `id="removePassword"`, "const REAUTH_PASSWORD =  true ", "never used to sign in"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("passkeys page with a password lacks %q", want)
+		}
+	}
+	emails := bodyString(t, h.get("/u/"+strconv.Itoa(n)+"/emails"))
+	if !strings.Contains(emails, "const REAUTH_PASSWORD =  true ") {
+		t.Error("the emails page does not offer the password to confirm a change")
+	}
+	if home := bodyString(t, h.get("/u/"+strconv.Itoa(n)+"/")); !strings.Contains(home, "Passkeys and password") {
+		t.Error("the home page does not link to the password")
+	}
+	if os.Getenv("NODE_CHECK") != "" {
+		checkScripts(t, signin)
+		checkScripts(t, page)
+		checkScripts(t, emails)
+	}
+}
+
+func TestPagesHideThePasswordWhenOff(t *testing.T) {
+	h := newHarness(t)
+	n := h.register("nopw@example.com")
+	page := bodyString(t, h.get("/u/"+strconv.Itoa(n)+"/passkeys"))
+	if strings.Contains(page, "<h2>Password</h2>") || strings.Contains(page, `id="passwordForm"`) {
+		t.Error("the passkeys page offers a password with PASSWORDS unset")
+	}
+	signin := bodyString(t, h.get("/signin?add=1"))
+	if strings.Contains(signin, `id="chooseStep"`) || !strings.Contains(signin, "const PASSWORDS =  false ") {
+		t.Error("the sign-in page offers a password with PASSWORDS unset")
+	}
+	if os.Getenv("NODE_CHECK") != "" {
+		checkScripts(t, signin)
+		checkScripts(t, page)
+	}
 }

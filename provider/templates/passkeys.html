@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Passkeys — {{.ServiceName}}</title>
+<title>{{if or .Passwords .Password}}Passkeys and password{{else}}Passkeys{{end}} — {{.ServiceName}}</title>
 <style>
   :root { color-scheme: light dark; }
   body { font: 16px/1.6 system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; }
@@ -15,10 +15,13 @@
   input[type=text] { flex: 1; min-width: 8rem; background: none; color: inherit; }
   button { cursor: pointer; background: none; color: inherit; }
   .msg { min-height: 1.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  input[type=password] { font: inherit; flex: 1; min-width: 12rem; padding: .4rem .6rem; border-radius: .4rem;
+                         border: 1px solid currentColor; background: none; color: inherit; }
 </style>
 
 <h1>Your passkeys</h1>
-{{with .HeldUntil}}<p class="muted">You signed in with a passkey added by recovering this account. Until {{.Format "2 January 2006"}}, removing a passkey needs a passkey you had before.</p>{{end}}
+{{with .HeldUntil}}<p class="muted">You signed in with a passkey or password set by recovering this account. Until {{.Format "2 January 2006"}}, removing a passkey or changing the password needs one you had before.</p>{{end}}
 <p class="muted">These are the passkeys that can sign in to this account. Remove one you no longer use or have lost.</p>
 
 <ul id="list">
@@ -35,6 +38,30 @@
   </li>
   {{end}}
 </ul>
+{{if not .Passkeys}}<p class="muted">This account has no passkeys yet.</p>{{end}}
+<p class="muted"><a href="{{.Base}}/signin?add=1">Add a passkey</a>: sign in with your email on the device, enter the code, and create a passkey.</p>
+
+{{if or .Passwords .Password}}
+<h2>Password</h2>
+{{with .Password}}
+<p class="muted">This account has a password, set <time datetime="{{.UpdatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.UpdatedAt.Format "2 Jan 2006"}}</time> ·
+  {{if .LastUsedAt}}last used <time datetime="{{.LastUsedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.LastUsedAt.Format "2 Jan 2006"}}</time>{{else}}never used to sign in{{end}}.</p>
+{{else}}
+<p class="muted">Passkeys are the safer way in. Add a password only for a device that cannot use passkeys.</p>
+{{end}}
+{{if .Passwords}}
+<form class="actions" id="passwordForm">
+  <input type="text" name="username" autocomplete="username" value="{{.Primary}}" hidden>
+  <input type="password" id="newPassword" autocomplete="new-password" minlength="{{.MinPassword}}" required
+         aria-label="New password" placeholder="At least {{.MinPassword}} characters">
+  <button type="submit">{{if .Password}}Change password{{else}}Add a password{{end}}</button>
+</form>
+{{else}}
+<p class="muted">This site no longer signs in with passwords. You can remove yours.</p>
+{{end}}
+{{if .Password}}<div class="actions"><button type="button" id="removePassword">Remove password</button></div>{{end}}
+{{end}}
+
 <p class="msg" id="msg" role="status"></p>
 <p class="muted"><a href="{{.Base}}/u/{{.Account}}/">Back</a></p>
 
@@ -43,6 +70,7 @@
 <script>
 const ACCOUNT = {{.Account}};
 const PRIMARY = {{.Primary}};
+const REAUTH_PASSWORD = {{.ReauthPassword}};
 const API = '{{.Base}}/accounts/v1';
 const BASE = '{{.Base}}/accounts/v1/passkeys';
 const msg = t => document.getElementById('msg').textContent = t;
@@ -80,6 +108,36 @@ list.addEventListener('click', async e => {
   const { ok, out } = res;
   if (!ok) { msg(out.error_description || 'Could not remove the passkey.'); return; }
   await signalAcceptedPasskeys(out.signal);
+  location.reload();
+});
+
+async function passwordCall(path, body) {
+  const r = await fetch(API + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account: ACCOUNT, ...body }),
+  });
+  const out = await r.json().catch(() => ({}));
+  return { status: r.status, ok: r.ok, out };
+}
+
+const passwordForm = document.getElementById('passwordForm');
+if (passwordForm) passwordForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  const password = document.getElementById('newPassword').value;
+  msg('Saving…');
+  const res = await withReauth(() => passwordCall('/password', { password }), API, PRIMARY, msg);
+  if (!res) return;
+  if (!res.ok) { msg(res.out.error_description || 'Could not save the password.'); return; }
+  location.reload();
+});
+
+const removePassword = document.getElementById('removePassword');
+if (removePassword) removePassword.addEventListener('click', async () => {
+  if (!confirm('Remove the password? It will no longer sign in to this account.')) return;
+  msg('Removing…');
+  const res = await withReauth(() => passwordCall('/password/remove', {}), API, PRIMARY, msg);
+  if (!res) return;
+  if (!res.ok) { msg(res.out.error_description || 'Could not remove the password.'); return; }
   location.reload();
 });
 </script>

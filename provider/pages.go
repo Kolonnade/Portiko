@@ -2,6 +2,7 @@ package provider
 
 import (
 	"embed"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/Kolonnade/Portiko/internal/config"
 	"github.com/Kolonnade/Portiko/internal/localpath"
+	"github.com/Kolonnade/Portiko/internal/password"
+	"github.com/Kolonnade/Portiko/internal/store"
 	"github.com/Kolonnade/Portiko/profile"
 )
 
@@ -129,6 +132,12 @@ func (p *Pages) Passkeys(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		primary = ""
 	}
+	pw, err := p.passwordView(r, a)
+	if err != nil {
+		slog.Error("passkeys: loading the password", "err", err)
+		p.message(w, http.StatusInternalServerError, "Something went wrong", "Your passkeys could not be loaded. Try again.")
+		return
+	}
 	p.render(w, http.StatusOK, "passkeys.html", map[string]any{
 		"ServiceName": p.cfg.ServiceName,
 		"Account":     a.Ordinal,
@@ -137,7 +146,25 @@ func (p *Pages) Passkeys(w http.ResponseWriter, r *http.Request) {
 		"MaxNameLen":  profile.MaxNameLen,
 		"Primary":     primary,
 		"HeldUntil":   heldUntil(&a.Session),
+		// The password section (PASSWORDS=allow, docs/passwords.md): shown
+		// when passwords are allowed, or when the account still has one.
+		"Passwords":      p.cfg.PasswordsAllowed(),
+		"Password":       pw,
+		"MinPassword":    password.MinLength,
+		"ReauthPassword": pw != nil && p.cfg.PasswordsAllowed(),
 	})
+}
+
+// passwordView is the account's password for a page, or nil when it has none.
+func (p *Pages) passwordView(r *http.Request, a *account) (*passwordView, error) {
+	pw, err := p.auth.db.PasswordOf(r.Context(), a.UserID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &passwordView{CreatedAt: pw.CreatedAt.UTC(), UpdatedAt: pw.UpdatedAt.UTC(), LastUsedAt: utcPtr(pw.LastUsedAt)}, nil
 }
 
 // EmailsRedirect: GET /emails — sites, and the address-change notices, link
@@ -189,7 +216,14 @@ func (p *Pages) Emails(w http.ResponseWriter, r *http.Request) {
 		"CanAdd":      len(emails) < limit,
 		"ReauthUntil": reauthUntil(&a.Session),
 		"HeldUntil":   heldUntil(&a.Session),
+		// An account with a password may confirm a change with it.
+		"ReauthPassword": p.cfg.PasswordsAllowed() && p.hasPassword(r, a),
 	})
+}
+
+func (p *Pages) hasPassword(r *http.Request, a *account) bool {
+	pw, err := p.passwordView(r, a)
+	return err == nil && pw != nil
 }
 
 // site is one first-party site linked from the home page.
@@ -236,6 +270,7 @@ func (p *Pages) Home(w http.ResponseWriter, r *http.Request) {
 		"CanAdd":      len(list) < maxAccounts,
 		"Sites":       sites,
 		"Signal":      signal,
+		"Passwords":   p.cfg.PasswordsAllowed(),
 		// The profile version gates the passkey rename signal to once per change.
 		"ProfileVersion": a.User.ProfileUpdatedAt,
 	})
@@ -312,6 +347,10 @@ func (p *Pages) SignIn(w http.ResponseWriter, r *http.Request) {
 		"Create":        create,
 		"CodeRequired":  p.cfg.RegistrationMode() == config.RegistrationCode && !p.auth.policySet,
 		"EmailFrom":     codeSender(p.cfg.EmailFrom),
+		// PASSWORDS=allow: offer a password sign-in beside the passkey button,
+		// and a password beside the passkey once the code is accepted.
+		"Passwords":   p.cfg.PasswordsAllowed(),
+		"MinPassword": password.MinLength,
 	})
 }
 

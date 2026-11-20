@@ -1,12 +1,46 @@
 {{define "passkey-reauth"}}<script>
 // withReauth runs call, a function returning {status, ok, out}. When the answer
-// is 403 reauthentication_required — the change needs a passkey ceremony in the
-// last few minutes — it signs in again as the account and runs call once more.
-// Signing in again as the account is that ceremony.
+// is 403 reauthentication_required — the change needs a sign-in in the last few
+// minutes — it signs in again as the account and runs call once more. Signing
+// in again as the account, with a passkey or its password, is that sign-in.
 const b64uToBuf = s => Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')), c => c.charCodeAt(0));
 const bufToB64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 
+// askPassword offers the account's password as the way to confirm, for an
+// account that has one (the page sets REAUTH_PASSWORD). It resolves to
+// {how: 'password' | 'passkey' | 'cancel', pw}.
+function askPassword() {
+  return new Promise(resolve => {
+    const d = document.createElement('dialog');
+    d.innerHTML = '<form method="dialog"><p>Confirm it is you.</p>' +
+      '<label>Password <input type="password" autocomplete="current-password"></label>' +
+      '<p><button value="password">Confirm</button> <button value="passkey">Use a passkey instead</button> ' +
+      '<button value="cancel">Cancel</button></p></form>';
+    document.body.appendChild(d);
+    d.addEventListener('close', () => {
+      const pw = d.querySelector('input').value;
+      const how = d.returnValue || 'cancel';
+      d.remove();
+      resolve({ how, pw });
+    });
+    d.showModal();
+  });
+}
+
 async function reauth(api, email, msg) {
+  if (typeof REAUTH_PASSWORD !== 'undefined' && REAUTH_PASSWORD) {
+    const { how, pw } = await askPassword();
+    if (how === 'cancel') throw new Error('cancelled');
+    if (how === 'password') {
+      msg('Checking…');
+      const r = await fetch(api + '/login/password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: pw }),
+      });
+      if (!r.ok) throw new Error('password refused');
+      return;
+    }
+  }
   msg('Confirm it is you with your passkey…');
   const r = await fetch(api + '/login/start' + (email ? '?email=' + encodeURIComponent(email) : ''));
   if (!r.ok) throw new Error('start failed');
@@ -32,7 +66,7 @@ async function reauth(api, email, msg) {
 async function withReauth(call, api, email, msg) {
   let res = await call();
   if (res.status === 403 && res.out.error === 'reauthentication_required') {
-    try { await reauth(api, email, msg); } catch (e) { msg('Your passkey was not confirmed, so nothing changed.'); return null; }
+    try { await reauth(api, email, msg); } catch (e) { msg('It was not confirmed, so nothing changed.'); return null; }
     res = await call();
   }
   return res;
