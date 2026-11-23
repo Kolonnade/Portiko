@@ -435,6 +435,13 @@ func (c *Client) RequireUserAPI(next http.Handler) http.Handler {
 	})
 }
 
+// OptionalUser attaches the session, as RequireUser does, when the request
+// carries a valid one, and otherwise runs next without one: for a handler
+// that serves signed-in and anonymous callers differently.
+func (c *Client) OptionalUser(next http.Handler) http.Handler {
+	return c.requireUser(next, next.ServeHTTP)
+}
+
 func (c *Client) requireUser(next http.Handler, anonymous http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
